@@ -77,47 +77,8 @@
   display: inline-block;
   border-radius: 5px;
   -webkit-border-radius: 5px;
-}
-
-.contactme {
-  position: relative;
-  padding: 11px 35px;
-  background: none;
-  color: #fff;
-  border: 2px solid #fff;
-  font-weight: 600;
-  font-size: 15px;
-  letter-spacing: 1px;
-  display: inline-block;
   margin-top: 1.5em;
-  border-radius: 5px;
-  -webkit-border-radius: 5px;
-}
-
-.contactme:hover{
-  color: #00796b;
-  background-color: white;
-}
-
-.blogme {
-  position: relative;
-  padding: 11px 35px;
-  background: none;
-  color: #ffe082;
-  border: 2px solid #ffe082;
-  font-weight: 600;
-  font-size: 15px;
-  letter-spacing: 1px;
-  display: inline-block;
-  margin-top: 1.5em;
-  margin-left: 10px;
-  border-radius: 5px;
-  -webkit-border-radius: 5px;
-}
-
-.blogme:hover {
-  color: #1f2933;
-  background-color: #ffe082;
+  margin-right: 10px;
 }
 
 body {
@@ -460,24 +421,6 @@ a.hoverline:hover {
   text-align: center;
 }
 
-#linkedin .linkedin-card {
-  margin-bottom: 30px;
-}
-
-.linkedin-cta {
-  background-color: #0a66c2;
-  border-radius: 4px;
-  color: #fff !important;
-  display: inline-block;
-  font-weight: 600;
-  padding: 10px 18px;
-  text-transform: uppercase;
-}
-
-.linkedin-cta:hover {
-  background-color: #004182;
-}
-
 .fa-external-link:before {
   left: 3px;
   position: relative;
@@ -588,11 +531,6 @@ small {
 }
 
 @media (max-width: 600px) {
-  .blogme {
-    margin-left: 0;
-    margin-top: 1em;
-  }
-
   h2 {
     font-size: 22px;
     line-height: 200%;
