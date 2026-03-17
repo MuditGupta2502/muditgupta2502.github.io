@@ -71,17 +71,6 @@ body {
   border-color: #b9b9b9;
 }
 
-.btn-solid {
-  border: 1px solid var(--accent);
-  color: #fff;
-  background: var(--accent);
-}
-
-.btn-solid:hover {
-  background: #157312;
-  border-color: #157312;
-}
-
 main {
   width: min(1040px, 92vw);
   margin: 0 auto;
@@ -148,19 +137,6 @@ h2 {
   margin: 0;
   color: #3f3f3f;
   font-size: 19px;
-}
-
-.read-link {
-  display: inline-block;
-  margin-top: 14px;
-  color: var(--accent);
-  font-size: 15px;
-  font-weight: 700;
-  text-decoration: none;
-}
-
-.read-link:hover {
-  text-decoration: underline;
 }
 
 .page-footer {
