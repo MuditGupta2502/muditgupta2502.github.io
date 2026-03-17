@@ -48,6 +48,10 @@
   color: black;
 }
 
+.linkedin {
+  color: #0a66c2;
+}
+
 .icon-btn:hover {
   transform: scale(1.10);
   color: #FFFFFF;
@@ -55,6 +59,10 @@
 
 .github:hover {
   background-color: black;
+}
+
+.linkedin:hover {
+  background-color: #0a66c2;
 }
 
 .readme {
@@ -431,6 +439,37 @@ a.hoverline:hover {
   text-align: center;
 }
 
+#linkedin .linkedin-card,
+#articles .article-card {
+  margin-bottom: 30px;
+}
+
+.linkedin-cta {
+  background-color: #0a66c2;
+  border-radius: 4px;
+  color: #fff !important;
+  display: inline-block;
+  font-weight: 600;
+  padding: 10px 18px;
+  text-transform: uppercase;
+}
+
+.linkedin-cta:hover {
+  background-color: #004182;
+}
+
+.article-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 20px;
+}
+
+.article-card .card-title {
+  display: block;
+  font-size: 20px;
+  line-height: 1.5;
+}
+
 .fa-external-link:before {
   left: 3px;
   position: relative;
@@ -474,6 +513,10 @@ small {
 }
 
 @media (max-width: 992px) {
+  .article-grid {
+    grid-template-columns: 1fr;
+  }
+
   main {
     padding-left: 0px;
     padding-top: 64px;
