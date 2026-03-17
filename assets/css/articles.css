@@ -1,0 +1,206 @@
+@import url("https://fonts.googleapis.com/css2?family=Libre+Baskerville:wght@400;700&family=Source+Sans+3:wght@400;600;700&display=swap");
+
+:root {
+  --page-bg: #f7f7f5;
+  --surface: #ffffff;
+  --ink: #242424;
+  --muted: #6b6b6b;
+  --line: #e4e4e4;
+  --accent: #1a8917;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: radial-gradient(circle at top right, #efefe8 0%, #f7f7f5 50%, #f7f7f5 100%);
+  color: var(--ink);
+  font-family: "Source Sans 3", sans-serif;
+  line-height: 1.7;
+}
+
+.topbar {
+  background: rgba(255, 255, 255, 0.96);
+  border-bottom: 1px solid var(--line);
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+
+.topbar-inner {
+  width: min(1040px, 92vw);
+  margin: 0 auto;
+  min-height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.home-link {
+  color: var(--ink);
+  font-family: "Libre Baskerville", serif;
+  font-size: 20px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.topbar-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.btn {
+  text-decoration: none;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 14px;
+  padding: 9px 16px;
+  transition: all 0.2s ease;
+}
+
+.btn-outline {
+  border: 1px solid var(--line);
+  color: var(--ink);
+  background: var(--surface);
+}
+
+.btn-outline:hover {
+  border-color: #b9b9b9;
+}
+
+.btn-solid {
+  border: 1px solid var(--accent);
+  color: #fff;
+  background: var(--accent);
+}
+
+.btn-solid:hover {
+  background: #157312;
+  border-color: #157312;
+}
+
+main {
+  width: min(1040px, 92vw);
+  margin: 0 auto;
+}
+
+.hero {
+  width: min(760px, 100%);
+  padding: 64px 0 28px;
+}
+
+.kicker {
+  color: var(--accent);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin: 0;
+}
+
+h1 {
+  font-family: "Libre Baskerville", serif;
+  font-size: clamp(34px, 5vw, 56px);
+  line-height: 1.14;
+  margin: 10px 0 14px;
+}
+
+.lead {
+  color: var(--muted);
+  font-size: 22px;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.article-list {
+  width: min(760px, 100%);
+  padding-bottom: 56px;
+}
+
+.article-item {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  margin-bottom: 18px;
+  padding: 24px;
+}
+
+.meta {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+h2 {
+  font-family: "Libre Baskerville", serif;
+  font-size: clamp(24px, 3vw, 32px);
+  line-height: 1.3;
+  margin: 10px 0 10px;
+}
+
+.article-item p {
+  margin: 0;
+  color: #3f3f3f;
+  font-size: 19px;
+}
+
+.read-link {
+  display: inline-block;
+  margin-top: 14px;
+  color: var(--accent);
+  font-size: 15px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.read-link:hover {
+  text-decoration: underline;
+}
+
+.page-footer {
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  text-align: center;
+  padding: 24px 16px 36px;
+}
+
+.page-footer p {
+  margin: 0;
+}
+
+@media (max-width: 700px) {
+  .topbar-inner {
+    min-height: 64px;
+  }
+
+  .topbar-actions {
+    gap: 8px;
+  }
+
+  .btn {
+    font-size: 13px;
+    padding: 7px 12px;
+  }
+
+  .hero {
+    padding-top: 36px;
+  }
+
+  .lead {
+    font-size: 18px;
+  }
+
+  .article-item {
+    padding: 18px;
+  }
+
+  .article-item p {
+    font-size: 17px;
+  }
+}
