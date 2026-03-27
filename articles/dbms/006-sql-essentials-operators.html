@@ -1,19 +1,24 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta http-equiv="X-UA-Compatible" content="IE=edge" />
   <title>SQL Essentials & Operators | Mudit Gupta</title>
-  <meta name="description" content="SQL fundamentals, DDL, DML, DCL commands, and operators for database queries." />
+  <meta name="description" content="Comprehensive SQL guide: DDL, DML, TCL, DCL, all operators, aggregates, GROUP BY, HAVING, string and date functions, NULL handling, and CASE expressions." />
   <link rel="stylesheet" href="/assets/css/articles.css" />
   <style>
     .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
     .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; color: #1a1a1a; }
+    .article-content h3 { margin-top: 1.5rem; margin-bottom: 0.75rem; color: #1a1a1a; }
     .article-content p { margin-bottom: 1rem; color: #333; }
     .article-content ul, .article-content ol { margin-left: 2rem; margin-bottom: 1rem; }
     .article-content li { margin-bottom: 0.5rem; }
-    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; white-space: pre; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    table th, table td { border: 1px solid #ddd; padding: 0.75rem; text-align: left; }
+    table th { background: #f0f0f0; font-weight: 600; }
+    .note-box { background: #fff8e1; border-left: 4px solid #f9a825; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
   </style>
 </head>
 <body>
@@ -29,245 +34,349 @@
   <main>
     <article class="article-content">
       <p class="kicker">DBMS Series | Part 006</p>
-      <h1>SQL Essentials: DDL, DML, Operators & Fundamentals</h1>
-      <p class="meta">SQL Fundamentals | 10 min read</p>
+      <h1>SQL Essentials: DDL, DML, Operators &amp; Functions</h1>
+      <p class="meta">SQL Fundamentals | 22 min read</p>
 
-      <h2>What is SQL?</h2>
+      <h2>What Is SQL and Why Does It Dominate?</h2>
       <p>
-        SQL (Structured Query Language) is a standardized programming language used to manage and manipulate relational databases. It provides a consistent interface across different DBMS platforms (MySQL, PostgreSQL, Oracle, SQL Server).
+        SQL (Structured Query Language) is the standard language for interacting with relational databases.
+        Standardized in 1986 by ANSI and later ISO, it is supported (with minor dialect differences) by MySQL,
+        PostgreSQL, SQL Server, Oracle, SQLite, and many others. Writing correct, efficient SQL is one of the
+        most broadly useful skills in software engineering.
       </p>
-      <p>
-        SQL has three main categories:
-      </p>
+
+      <h2>SQL Command Categories</h2>
+      <table>
+        <tr><th>Category</th><th>Stands For</th><th>Commands</th><th>Purpose</th></tr>
+        <tr><td>DDL</td><td>Data Definition Language</td><td>CREATE, ALTER, DROP, TRUNCATE, RENAME</td><td>Define structure</td></tr>
+        <tr><td>DML</td><td>Data Manipulation Language</td><td>SELECT, INSERT, UPDATE, DELETE</td><td>Work with data</td></tr>
+        <tr><td>TCL</td><td>Transaction Control Language</td><td>COMMIT, ROLLBACK, SAVEPOINT</td><td>Manage transactions</td></tr>
+        <tr><td>DCL</td><td>Data Control Language</td><td>GRANT, REVOKE</td><td>Manage permissions</td></tr>
+      </table>
+
+      <h2>DDL: Defining Structure</h2>
+
+      <h3>CREATE TABLE</h3>
+      <div class="code-block">CREATE TABLE Students (
+    student_id   INT            PRIMARY KEY,
+    name         VARCHAR(100)   NOT NULL,
+    email        VARCHAR(255)   UNIQUE NOT NULL,
+    dob          DATE,
+    gpa          DECIMAL(3,2)   CHECK (gpa &gt;= 0.00 AND gpa &lt;= 10.00),
+    dept_id      INT,
+    enrolled_at  TIMESTAMP      DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (dept_id) REFERENCES Departments(dept_id)
+        ON DELETE SET NULL ON UPDATE CASCADE
+);</div>
+      <p>Key constraint types:</p>
       <ul>
-        <li><strong>DDL:</strong> Data Definition Language (CREATE, ALTER, DROP)</li>
-        <li><strong>DML:</strong> Data Manipulation Language (SELECT, INSERT, UPDATE, DELETE)</li>
-        <li><strong>DCL:</strong> Data Control Language (GRANT, REVOKE)</li>
+        <li><code>PRIMARY KEY</code> — unique + not null.</li>
+        <li><code>UNIQUE</code> — unique but allows one NULL per column (most DBMS).</li>
+        <li><code>NOT NULL</code> — value required.</li>
+        <li><code>CHECK (expr)</code> — value must satisfy expression.</li>
+        <li><code>DEFAULT value</code> — used when no value is provided at insert time.</li>
+        <li><code>FOREIGN KEY ... REFERENCES</code> — enforces referential integrity.</li>
       </ul>
 
-      <h2>DDL: Data Definition Language</h2>
-      <p>
-        DDL statements define the structure of the database and tables.
-      </p>
-      <p>
-        <strong>CREATE TABLE:</strong> Creates a new table with specified columns and constraints.
-      </p>
-      <div class="code-block">
-<pre>CREATE TABLE Students (
-  student_id INT PRIMARY KEY AUTO_INCREMENT,
-  name VARCHAR(100) NOT NULL,
-  email VARCHAR(100) UNIQUE,
-  age INT CHECK (age >= 18),
-  enrollment_date DATE DEFAULT CURDATE()
-);</pre>
-      </div>
+      <h3>ALTER TABLE</h3>
+      <div class="code-block">-- Add a column
+ALTER TABLE Students ADD COLUMN phone VARCHAR(20);
 
-      <p>
-        <strong>ALTER TABLE:</strong> Modifies an existing table structure.
-      </p>
-      <div class="code-block">
-<pre>-- Add a column
-ALTER TABLE Students ADD phone VARCHAR(15);
+-- Modify a column type
+ALTER TABLE Students MODIFY COLUMN phone VARCHAR(15) NOT NULL;
+
+-- Rename a column (PostgreSQL syntax)
+ALTER TABLE Students RENAME COLUMN phone TO mobile;
 
 -- Drop a column
-ALTER TABLE Students DROP COLUMN phone;
+ALTER TABLE Students DROP COLUMN mobile;
 
--- Modify column
-ALTER TABLE Students MODIFY name VARCHAR(150);</pre>
-      </div>
+-- Add a constraint
+ALTER TABLE Students ADD CONSTRAINT chk_gpa CHECK (gpa &gt;= 0);
 
-      <p>
-        <strong>DROP TABLE:</strong> Deletes a table and all its data.
-      </p>
-      <div class="code-block">
-<pre>DROP TABLE Students;
-DROP TABLE IF EXISTS Students; -- Safe drop</pre>
-      </div>
+-- Drop a constraint
+ALTER TABLE Students DROP CONSTRAINT chk_gpa;</div>
 
-      <p>
-        <strong>TRUNCATE TABLE:</strong> Deletes all rows but keeps the table structure.
-      </p>
-      <div class="code-block">
-<pre>TRUNCATE TABLE Students;</pre>
-      </div>
+      <h3>DROP, TRUNCATE, DELETE Compared</h3>
+      <table>
+        <tr><th>Operation</th><th>Removes structure?</th><th>Removes data?</th><th>Rollback possible?</th><th>Triggers fire?</th></tr>
+        <tr><td>DROP TABLE</td><td>Yes</td><td>Yes</td><td>No (DDL)</td><td>No</td></tr>
+        <tr><td>TRUNCATE TABLE</td><td>No</td><td>Yes (all rows)</td><td>Usually no (DDL)</td><td>No</td></tr>
+        <tr><td>DELETE FROM</td><td>No</td><td>Yes (with filter)</td><td>Yes (DML)</td><td>Yes</td></tr>
+      </table>
 
-      <h2>DML: Data Manipulation Language</h2>
-      <p>
-        <strong>SELECT:</strong> Retrieves data from tables.
-      </p>
-      <div class="code-block">
-<pre>SELECT column1, column2 FROM table_name;
-SELECT * FROM Students; -- All columns
-SELECT name, email FROM Students WHERE age > 20;</pre>
-      </div>
+      <h2>DML: Manipulating Data</h2>
 
-      <p>
-        <strong>INSERT:</strong> Adds new rows to a table.
-      </p>
-      <div class="code-block">
-<pre>INSERT INTO Students (name, email, age)
-VALUES ('John Doe', 'john@example.com', 22);
+      <h3>INSERT</h3>
+      <div class="code-block">-- Single row insert
+INSERT INTO Students (student_id, name, email, dob)
+VALUES (101, 'Mudit', 'mudit@example.com', '2002-04-15');
 
-INSERT INTO Students 
-VALUES (1, 'Jane Doe', 'jane@example.com', 21, '2024-01-15');</pre>
-      </div>
+-- Multi-row insert
+INSERT INTO Students (student_id, name, email) VALUES
+    (102, 'Aisha', 'aisha@example.com'),
+    (103, 'Ravi',  'ravi@example.com');
 
-      <p>
-        <strong>UPDATE:</strong> Modifies existing data.
-      </p>
-      <div class="code-block">
-<pre>UPDATE Students 
-SET email = 'newemail@example.com' 
-WHERE student_id = 1;
+-- Insert from a SELECT
+INSERT INTO ArchivedStudents (student_id, name, email)
+SELECT student_id, name, email FROM Students
+WHERE enrolled_at &lt; '2020-01-01';</div>
 
-UPDATE Students 
-SET age = age + 1; -- Increment all ages</pre>
-      </div>
+      <h3>UPDATE</h3>
+      <div class="code-block">-- Update single column
+UPDATE Students SET gpa = 9.0 WHERE student_id = 101;
 
-      <p>
-        <strong>DELETE:</strong> Removes rows from a table.
-      </p>
-      <div class="code-block">
-<pre>DELETE FROM Students WHERE student_id = 1;
-DELETE FROM Students WHERE age < 18;</pre>
-      </div>
+-- Update multiple columns
+UPDATE Students SET gpa = 8.5, phone = '9876543210'
+WHERE student_id = 102;
 
-      <h2>Comparison Operators</h2>
-      <ul>
-        <li><strong>=</strong> Equal to: WHERE age = 25</li>
-        <li><strong>!=</strong> or <strong>&lt;&gt;</strong> Not equal: WHERE status != 'inactive'</li>
-        <li><strong>&gt;</strong> Greater than: WHERE salary > 50000</li>
-        <li><strong>&lt;</strong> Less than: WHERE age < 30</li>
-        <li><strong>&gt;=</strong> Greater or equal: WHERE score >= 80</li>
-        <li><strong>&lt;=</strong> Less or equal: WHERE quantity <= 10</li>
-      </ul>
+-- Update with calculation
+UPDATE Products SET price = price * 1.10 WHERE category = 'Electronics';
 
-      <h2>Logical Operators</h2>
-      <p>
-        <strong>AND:</strong> All conditions must be true.
-      </p>
-      <div class="code-block">
-<pre>SELECT * FROM Students 
-WHERE age > 20 AND grade = 'A';</pre>
-      </div>
+-- Update based on subquery
+UPDATE Students
+SET dept_id = (SELECT dept_id FROM Departments WHERE dept_name = 'Computer Science')
+WHERE student_id = 103;</div>
 
-      <p>
-        <strong>OR:</strong> At least one condition must be true.
-      </p>
-      <div class="code-block">
-<pre>SELECT * FROM Students 
-WHERE status = 'active' OR age > 25;</pre>
-      </div>
+      <h3>DELETE</h3>
+      <div class="code-block">-- Delete specific rows
+DELETE FROM Enrollments WHERE student_id = 101 AND semester = '2023S1';
 
-      <p>
-        <strong>NOT:</strong> Negates a condition.
-      </p>
-      <div class="code-block">
-<pre>SELECT * FROM Students 
-WHERE NOT status = 'inactive';</pre>
-      </div>
+-- Delete all rows (but keep structure — use TRUNCATE for performance)
+DELETE FROM TemporaryLog;
 
-      <h2>Pattern Matching: LIKE</h2>
-      <p>
-        LIKE is used for pattern matching with wildcards.
-      </p>
-      <div class="code-block">
-<pre>-- Start with 'J'
-SELECT * FROM Students WHERE name LIKE 'J%';
+-- Delete with subquery
+DELETE FROM Students
+WHERE student_id NOT IN (SELECT DISTINCT student_id FROM Enrollments);</div>
 
--- End with 'son'
-SELECT * FROM Students WHERE name LIKE '%son';
+      <h3>SELECT — The Core Query</h3>
+      <div class="code-block">SELECT [DISTINCT] column_list | *
+FROM table [alias]
+[JOIN ...]
+[WHERE condition]
+[GROUP BY columns]
+[HAVING group_condition]
+[ORDER BY columns [ASC | DESC]]
+[LIMIT n OFFSET m];</div>
+      <p>The logical processing order is: FROM &rarr; JOIN &rarr; WHERE &rarr; GROUP BY &rarr; HAVING &rarr; SELECT &rarr; DISTINCT &rarr; ORDER BY &rarr; LIMIT.</p>
 
--- Contains 'oh'
-SELECT * FROM Students WHERE name LIKE '%oh%';
+      <h2>Comparison and Logical Operators</h2>
+      <div class="code-block">-- Comparison
+WHERE age = 20
+WHERE age != 20   OR   WHERE age &lt;&gt; 20
+WHERE gpa &gt;= 8.5
+WHERE gpa BETWEEN 7.0 AND 9.0    -- inclusive on both ends
+WHERE name LIKE 'M%'             -- starts with M
+WHERE name LIKE '_u%'            -- second char is u
+WHERE email ILIKE '%@gmail%'     -- case-insensitive LIKE (PostgreSQL)
+WHERE dept_id IN (1, 2, 5)
+WHERE dept_id NOT IN (3, 4)
+WHERE dept_id IS NULL
+WHERE dept_id IS NOT NULL
 
--- Exact 4 characters
-SELECT * FROM Students WHERE name LIKE '____';</pre>
-      </div>
+-- Logical
+WHERE age &gt; 18 AND gpa &gt;= 7.0
+WHERE age &gt; 25 OR gpa &gt; 9.0
+WHERE NOT (dept_id = 3)
 
-      <h2>IN and BETWEEN</h2>
-      <p>
-        <strong>IN:</strong> Matches values in a list.
-      </p>
-      <div class="code-block">
-<pre>SELECT * FROM Students 
-WHERE student_id IN (1, 5, 10);</pre>
-      </div>
-
-      <p>
-        <strong>BETWEEN:</strong> Matches range of values (inclusive).
-      </p>
-      <div class="code-block">
-<pre>SELECT * FROM Students 
-WHERE age BETWEEN 20 AND 25;</pre>
-      </div>
-
-      <h2>NULL Checks</h2>
-      <div class="code-block">
-<pre>-- Find NULL values
-SELECT * FROM Students WHERE email IS NULL;
-
--- Find non-NULL values
-SELECT * FROM Students WHERE email IS NOT NULL;</pre>
-      </div>
+-- BETWEEN is equivalent to:
+WHERE gpa &gt;= 7.0 AND gpa &lt;= 9.0</div>
 
       <h2>Aggregate Functions</h2>
+      <table>
+        <tr><th>Function</th><th>Returns</th><th>NULL handling</th></tr>
+        <tr><td>COUNT(*)</td><td>Total number of rows</td><td>Counts rows including NULLs</td></tr>
+        <tr><td>COUNT(col)</td><td>Rows where col is not NULL</td><td>Ignores NULLs</td></tr>
+        <tr><td>COUNT(DISTINCT col)</td><td>Unique non-null values</td><td>Ignores NULLs</td></tr>
+        <tr><td>SUM(col)</td><td>Total of numeric values</td><td>Ignores NULLs</td></tr>
+        <tr><td>AVG(col)</td><td>Mean of non-null values</td><td>Ignores NULLs</td></tr>
+        <tr><td>MIN(col)</td><td>Smallest value</td><td>Ignores NULLs</td></tr>
+        <tr><td>MAX(col)</td><td>Largest value</td><td>Ignores NULLs</td></tr>
+      </table>
+      <div class="code-block">SELECT dept_id,
+       COUNT(*)          AS total_students,
+       AVG(gpa)          AS avg_gpa,
+       MAX(gpa)          AS top_gpa,
+       MIN(gpa)          AS lowest_gpa,
+       COUNT(DISTINCT dob) AS unique_birthdays
+FROM Students
+GROUP BY dept_id;</div>
+
+      <h2>GROUP BY and HAVING</h2>
+      <p>
+        <code>GROUP BY</code> collapses rows with the same column values into one group.
+        <code>HAVING</code> filters those groups (like WHERE, but applied after aggregation).
+      </p>
+      <div class="code-block">-- Find departments with more than 5 students and average GPA above 8
+SELECT dept_id,
+       COUNT(*)  AS num_students,
+       AVG(gpa)  AS avg_gpa
+FROM Students
+GROUP BY dept_id
+HAVING COUNT(*) &gt; 5 AND AVG(gpa) &gt; 8.0
+ORDER BY avg_gpa DESC;</div>
+      <div class="note-box">
+        You cannot use a column alias defined in SELECT inside HAVING.
+        Repeat the aggregate expression: HAVING AVG(gpa) &gt; 8.0, not HAVING avg_gpa &gt; 8.0.
+      </div>
+
+      <h2>ORDER BY and LIMIT</h2>
+      <div class="code-block">-- Top 5 students by GPA descending
+SELECT student_id, name, gpa
+FROM Students
+ORDER BY gpa DESC, name ASC
+LIMIT 5;
+
+-- Pagination: page 3, 10 results per page (OFFSET = (page-1) * page_size)
+SELECT student_id, name
+FROM Students
+ORDER BY student_id
+LIMIT 10 OFFSET 20;   -- skip first 20 rows, return next 10</div>
+
+      <h2>NULL Handling in SQL</h2>
+      <p>
+        NULL in SQL means unknown or missing. It is not zero, it is not an empty string, and it is not false.
+        Any arithmetic or comparison involving NULL returns NULL.
+      </p>
+      <div class="code-block">SELECT 5 + NULL;          -- Returns NULL
+SELECT NULL = NULL;       -- Returns NULL (not TRUE)
+SELECT NULL IS NULL;      -- Returns TRUE
+SELECT NULL IS NOT NULL;  -- Returns FALSE
+
+-- Use COALESCE to substitute a default value
+SELECT name, COALESCE(gpa, 0.0) AS gpa FROM Students;
+
+-- Use NULLIF to return NULL when two values are equal (avoid division by zero)
+SELECT total_sales / NULLIF(num_orders, 0) AS avg_order_value FROM SalesData;</div>
+
+      <h2>String Functions</h2>
+      <div class="code-block">SELECT UPPER(name)                          -- 'mudit' &rarr; 'MUDIT'
+SELECT LOWER(name)                          -- 'MUDIT' &rarr; 'mudit'
+SELECT LENGTH(name)                         -- number of characters
+SELECT SUBSTRING(name, 1, 3)               -- first 3 chars
+SELECT TRIM('  hello  ')                    -- 'hello'
+SELECT LTRIM(name), RTRIM(name)             -- trim left/right only
+SELECT CONCAT(first_name, ' ', last_name)   -- join strings
+SELECT REPLACE(email, 'example', 'test')    -- find and replace
+SELECT INSTR(email, '@')                    -- position of '@'
+SELECT LPAD(student_id, 6, '0')            -- zero-pad: '000101'</div>
+
+      <h2>Date and Time Functions</h2>
+      <div class="code-block">SELECT NOW()                      -- current date and time
+SELECT CURDATE()                  -- current date only (MySQL)
+SELECT CURRENT_DATE               -- current date (standard SQL)
+SELECT DATEDIFF('2026-12-31', '2026-01-01')  -- days between dates
+SELECT DATE_ADD(NOW(), INTERVAL 30 DAY)      -- 30 days from now
+SELECT YEAR(dob), MONTH(dob), DAY(dob) FROM Students
+SELECT EXTRACT(YEAR FROM enrolled_at) AS yr   -- standard SQL
+SELECT TO_CHAR(now(), 'YYYY-MM-DD')           -- PostgreSQL format</div>
+
+      <h2>CASE Expressions</h2>
+      <p>CASE is SQL's conditional logic — equivalent to if/else inside a query.</p>
+      <div class="code-block">-- Simple CASE
+SELECT name,
+       CASE grade
+           WHEN 'A+' THEN 'Outstanding'
+           WHEN 'A'  THEN 'Excellent'
+           WHEN 'B'  THEN 'Good'
+           ELSE 'Needs Improvement'
+       END AS performance
+FROM Enrollments;
+
+-- Searched CASE (more powerful)
+SELECT name, gpa,
+       CASE
+           WHEN gpa &gt;= 9.0 THEN 'Distinction'
+           WHEN gpa &gt;= 7.5 THEN 'First Class'
+           WHEN gpa &gt;= 6.0 THEN 'Second Class'
+           ELSE 'Pass'
+       END AS grade_category
+FROM Students;</div>
+
+      <h2>Subqueries in SELECT</h2>
+      <div class="code-block">-- Scalar subquery: returns single value
+SELECT name, gpa,
+       (SELECT AVG(gpa) FROM Students) AS overall_avg
+FROM Students;
+
+-- IN with subquery
+SELECT name FROM Students
+WHERE dept_id IN (
+    SELECT dept_id FROM Departments WHERE dept_name LIKE '%Science%'
+);
+
+-- EXISTS (often more efficient than IN for large result sets)
+SELECT name FROM Students s
+WHERE EXISTS (
+    SELECT 1 FROM Enrollments e WHERE e.student_id = s.student_id
+);
+
+-- Correlated subquery (references outer query)
+SELECT name, gpa FROM Students s
+WHERE gpa &gt; (
+    SELECT AVG(gpa) FROM Students WHERE dept_id = s.dept_id
+);</div>
+
+      <h2>TCL: Transaction Control</h2>
+      <div class="code-block">BEGIN;  -- or START TRANSACTION
+
+UPDATE Accounts SET balance = balance - 500 WHERE account_id = 1;
+UPDATE Accounts SET balance = balance + 500 WHERE account_id = 2;
+
+-- If both succeed:
+COMMIT;
+
+-- If anything goes wrong:
+ROLLBACK;
+
+-- Partial rollback with savepoint
+SAVEPOINT before_transfer;
+UPDATE Accounts SET balance = balance - 500 WHERE account_id = 1;
+-- Something went wrong
+ROLLBACK TO before_transfer;
+COMMIT;</div>
+
+      <h2>DCL: GRANT and REVOKE</h2>
+      <div class="code-block">-- Grant SELECT privilege on Students table to user 'analyst'
+GRANT SELECT ON Students TO analyst;
+
+-- Grant multiple privileges
+GRANT SELECT, INSERT, UPDATE ON Enrollments TO app_user;
+
+-- Grant all privileges
+GRANT ALL PRIVILEGES ON DATABASE university TO admin_user;
+
+-- Revoke a privilege
+REVOKE INSERT ON Students FROM analyst;
+
+-- Grant with pass-on ability
+GRANT SELECT ON Students TO manager WITH GRANT OPTION;</div>
+
+      <h2>Common Pitfalls</h2>
       <ul>
-        <li><strong>COUNT():</strong> Counts number of rows</li>
-        <li><strong>SUM():</strong> Sums numeric values</li>
-        <li><strong>AVG():</strong> Calculates average</li>
-        <li><strong>MAX():</strong> Finds maximum value</li>
-        <li><strong>MIN():</strong> Finds minimum value</li>
+        <li><strong>Selecting non-aggregated columns without GROUP BY:</strong> Causes errors in strict mode (MySQL 5.7+, PostgreSQL always). Every column in SELECT must either be in GROUP BY or wrapped in an aggregate.</li>
+        <li><strong>Confusing WHERE and HAVING:</strong> WHERE filters rows before aggregation; HAVING filters groups after aggregation.</li>
+        <li><strong>NULL comparisons:</strong> Use IS NULL / IS NOT NULL, never = NULL.</li>
+        <li><strong>Missing quotes on string literals:</strong> Always use single quotes for strings in SQL, never double quotes (double quotes mean identifiers in standard SQL).</li>
+        <li><strong>TRUNCATE is hard to rollback:</strong> Prefer DELETE inside a transaction when you need rollback safety.</li>
       </ul>
-      <div class="code-block">
-<pre>SELECT COUNT(*) FROM Students;
-SELECT AVG(age) FROM Students;
-SELECT MAX(salary) FROM Employees;</pre>
-      </div>
 
-      <h2>ORDER BY and GROUP BY</h2>
-      <p>
-        <strong>ORDER BY:</strong> Sorts result set.
-      </p>
-      <div class="code-block">
-<pre>SELECT * FROM Students 
-ORDER BY age DESC;
-
-SELECT * FROM Students 
-ORDER BY name ASC, age DESC;</pre>
-      </div>
-
-      <p>
-        <strong>GROUP BY:</strong> Groups rows with aggregate functions.
-      </p>
-      <div class="code-block">
-<pre>SELECT department, COUNT(*) as emp_count
-FROM Employees
-GROUP BY department;</pre>
-      </div>
-
-      <h2>Constraints</h2>
+      <h2>What You Should Remember</h2>
       <ul>
-        <li><strong>PRIMARY KEY:</strong> Uniquely identifies each row</li>
-        <li><strong>FOREIGN KEY:</strong> References primary key of another table</li>
-        <li><strong>UNIQUE:</strong> All values in column are different</li>
-        <li><strong>NOT NULL:</strong> Column must have a value</li>
-        <li><strong>CHECK:</strong> Ensures values satisfy a condition</li>
-        <li><strong>DEFAULT:</strong> Provides default value if none specified</li>
+        <li>DDL defines structure (CREATE, ALTER, DROP). Changes are usually auto-committed.</li>
+        <li>DML manipulates data (SELECT, INSERT, UPDATE, DELETE). Participates in transactions.</li>
+        <li>SELECT logical order: FROM &rarr; JOIN &rarr; WHERE &rarr; GROUP BY &rarr; HAVING &rarr; SELECT &rarr; ORDER BY &rarr; LIMIT.</li>
+        <li>Aggregates ignore NULLs except COUNT(*). Handle NULLs deliberately with COALESCE, NULLIF, IS NULL.</li>
+        <li>CASE expressions let you put conditional logic directly in a query without application code.</li>
+        <li>Subqueries can appear in SELECT, FROM, WHERE, and HAVING clauses.</li>
       </ul>
 
-      <h2>Summary</h2>
-      <p>
-        SQL is the fundamental language for interacting with relational databases. Understanding DDL for defining structures, DML for manipulating data, and various operators for filtering and transforming data is essential for any database professional. These basics form the foundation for more advanced SQL topics like joins, subqueries, and optimization.
-      </p>
-      <p>
-        In the next article, we'll explore advanced SQL queries including joins, subqueries, and complex data retrieval.
-      </p>
+      <p>Next: Advanced SQL — Joins, window functions, CTEs, and complex multi-table queries.</p>
     </article>
   </main>
 
   <footer style="text-align: center; padding: 2rem; color: #666; border-top: 1px solid #eee; margin-top: 3rem;">
-    <p>&copy; 2024 Mudit Gupta. All rights reserved.</p>
+    <p>&copy; 2026 Mudit Gupta. All rights reserved.</p>
   </footer>
 </body>
 </html>

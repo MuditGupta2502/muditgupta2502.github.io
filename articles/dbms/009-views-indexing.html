@@ -1,19 +1,24 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta http-equiv="X-UA-Compatible" content="IE=edge" />
   <title>Views & Indexing | Mudit Gupta</title>
-  <meta name="description" content="Database Views, Index types, strategies, and performance tuning." />
+  <meta name="description" content="Comprehensive guide to database views (simple, complex, materialized, updatable) and all index types: B-tree internals, clustered, non-clustered, hash, bitmap, partial, and covering indexes." />
   <link rel="stylesheet" href="/assets/css/articles.css" />
   <style>
     .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
     .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; color: #1a1a1a; }
+    .article-content h3 { margin-top: 1.5rem; margin-bottom: 0.75rem; color: #1a1a1a; }
     .article-content p { margin-bottom: 1rem; color: #333; }
     .article-content ul, .article-content ol { margin-left: 2rem; margin-bottom: 1rem; }
     .article-content li { margin-bottom: 0.5rem; }
-    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; white-space: pre; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    table th, table td { border: 1px solid #ddd; padding: 0.75rem; text-align: left; }
+    table th { background: #f0f0f0; font-weight: 600; }
+    .note-box { background: #fff8e1; border-left: 4px solid #f9a825; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
   </style>
 </head>
 <body>
@@ -29,192 +34,309 @@
   <main>
     <article class="article-content">
       <p class="kicker">DBMS Series | Part 009</p>
-      <h1>Views & Indexing: Abstraction and Performance</h1>
-      <p class="meta">Database Design & Performance | 9 min read</p>
+      <h1>Views &amp; Indexing: Abstraction, Security, and Performance</h1>
+      <p class="meta">Database Design &amp; Performance | 22 min read</p>
 
-      <h2>Database Views</h2>
+      <h2>Part 1: Views</h2>
+
+      <h2>What Is a View?</h2>
       <p>
-        A view is a virtual table created from a query result. It doesn't store data itself but displays data from underlying base tables. Views provide abstraction, security, and simplified data access.
+        A view is a named, stored SQL query that appears to users as a virtual table.
+        It does not store data itself (with the exception of materialized views);
+        it stores the query definition and reruns it each time the view is queried.
       </p>
+      <p>Views serve three main purposes:</p>
+      <ul>
+        <li><strong>Abstraction:</strong> Hide complex joins or business logic behind a simple name.</li>
+        <li><strong>Security:</strong> Show only the columns or rows a user is authorized to see.</li>
+        <li><strong>Logical independence:</strong> Applications query the view; the underlying table structure can change without breaking application code.</li>
+      </ul>
 
-      <h2>Types of Views</h2>
+      <h2>Creating and Using Views</h2>
+      <div class="code-block">-- Simple view: active students only
+CREATE VIEW ActiveStudents AS
+SELECT student_id, name, email, dept_id
+FROM Students
+WHERE status = 'active';
+
+-- Query the view exactly like a table
+SELECT * FROM ActiveStudents WHERE dept_id = 3;
+
+-- Drop a view
+DROP VIEW ActiveStudents;
+
+-- Replace (update) an existing view definition
+CREATE OR REPLACE VIEW ActiveStudents AS
+SELECT student_id, name, email, dept_id, gpa
+FROM Students
+WHERE status = 'active';</div>
+
+      <h2>View Types</h2>
 
       <h3>Simple View</h3>
-      <p>
-        Created from a single table without aggregation or joins.
-      </p>
-      <div class="code-block">
-<pre>CREATE VIEW ActiveStudents AS
-SELECT student_id, name, email, enrollment_date
+      <p>Based on a single base table, no aggregation, no GROUP BY. Usually updatable.</p>
+      <div class="code-block">CREATE VIEW CSStudents AS
+SELECT student_id, name, email
 FROM Students
-WHERE status = 'active';</pre>
-      </div>
+WHERE dept_id = 1;</div>
 
       <h3>Complex View</h3>
-      <p>
-        Created from multiple tables using joins, aggregations, or subqueries.
-      </p>
-      <div class="code-block">
-<pre>CREATE VIEW StudentCourseStats AS
-SELECT 
-  s.student_id,
-  s.name,
-  COUNT(e.course_id) as courses_enrolled,
-  AVG(e.grade) as average_grade
+      <p>Based on multiple tables (JOINs), has aggregation or DISTINCT. Generally not directly updatable.</p>
+      <div class="code-block">CREATE VIEW StudentEnrollmentSummary AS
+SELECT s.student_id, s.name, d.dept_name,
+       COUNT(e.course_id) AS courses_enrolled,
+       AVG(s.gpa)         AS gpa
 FROM Students s
+JOIN Departments d  ON s.dept_id = d.dept_id
 LEFT JOIN Enrollments e ON s.student_id = e.student_id
-GROUP BY s.student_id, s.name;</pre>
-      </div>
+GROUP BY s.student_id, s.name, d.dept_name;</div>
 
-      <h3>Indexed View (Materialized View)</h3>
-      <p>
-        A view with an index that physically stores data. Used for frequently accessed complex queries.
-      </p>
-      <div class="code-block">
-<pre>CREATE VIEW StudentCourseSummary AS
-SELECT 
-  s.student_id,
-  s.name,
-  COUNT(e.course_id) as total_courses
-FROM Students s
-LEFT JOIN Enrollments e ON s.student_id = e.student_id
-GROUP BY s.student_id, s.name;
-
--- Create index on view (SQL Server/PostgreSQL)
-CREATE INDEX idx_studentcoursesummary 
-ON StudentCourseSummary(student_id);</pre>
-      </div>
-
-      <h2>Advantages of Views</h2>
+      <h3>Updatable View</h3>
+      <p>A view is updatable if modifications (INSERT, UPDATE, DELETE) on the view translate unambiguously back to modifications on a single base table. Conditions for updatability:</p>
       <ul>
-        <li><strong>Abstraction:</strong> Hide database complexity from users</li>
-        <li><strong>Security:</strong> Show only relevant columns/rows to users</li>
-        <li><strong>Simplification:</strong> Pre-join tables for common queries</li>
-        <li><strong>Maintainability:</strong> Update the view when underlying schema changes</li>
-        <li><strong>Consistency:</strong> Multiple applications use the same business logic</li>
+        <li>Based on a single base table.</li>
+        <li>No DISTINCT, GROUP BY, HAVING, UNION, or aggregates.</li>
+        <li>No subqueries in the SELECT list.</li>
+        <li>Selected columns map directly to columns in the base table.</li>
       </ul>
+      <div class="code-block">-- This simple view is updatable
+CREATE VIEW ActiveStudents AS
+SELECT student_id, name, email
+FROM Students WHERE status = 'active';
 
-      <h2>Disadvantages of Views</h2>
+-- This update goes through to the Students table
+UPDATE ActiveStudents SET email = 'new@example.com' WHERE student_id = 101;
+
+-- WITH CHECK OPTION: prevents updates that would make the row invisible through the view
+CREATE VIEW ActiveStudents AS
+SELECT student_id, name, email, status
+FROM Students WHERE status = 'active'
+WITH CHECK OPTION;
+
+-- This would be REJECTED because setting status='inactive' hides the row from the view
+UPDATE ActiveStudents SET status = 'inactive' WHERE student_id = 101;</div>
+
+      <h3>Materialized View</h3>
+      <p>
+        A materialized view actually stores the result of the query on disk.
+        It is refreshed periodically or on-demand.
+        This trades storage space and potential staleness for dramatically faster read performance on complex aggregation queries.
+      </p>
+      <div class="code-block">-- PostgreSQL
+CREATE MATERIALIZED VIEW DeptGPASummary AS
+SELECT dept_id, AVG(gpa) AS avg_gpa, COUNT(*) AS student_count
+FROM Students
+GROUP BY dept_id;
+
+-- Refresh the materialized view (recompute and store latest data)
+REFRESH MATERIALIZED VIEW DeptGPASummary;
+
+-- Concurrent refresh (allows reads while refreshing)
+REFRESH MATERIALIZED VIEW CONCURRENTLY DeptGPASummary;</div>
+      <table>
+        <tr><th>Feature</th><th>Regular View</th><th>Materialized View</th></tr>
+        <tr><td>Stores data?</td><td>No (virtual)</td><td>Yes (physical snapshot)</td></tr>
+        <tr><td>Data freshness</td><td>Always current</td><td>As of last refresh</td></tr>
+        <tr><td>Query performance</td><td>Re-executes query each time</td><td>Pre-computed; fast read</td></tr>
+        <tr><td>Can be indexed?</td><td>No</td><td>Yes</td></tr>
+        <tr><td>Best for</td><td>Security, abstraction</td><td>Expensive aggregation, reporting</td></tr>
+      </table>
+
+      <h2>Views as a Security Mechanism</h2>
+      <div class="code-block">-- A table with sensitive data
+CREATE TABLE Employees (
+    emp_id INT PRIMARY KEY, name VARCHAR(100),
+    email  VARCHAR(255),     salary DECIMAL(10,2),
+    ssn    CHAR(11)
+);
+
+-- A safe view for the HR reporting role (hides salary and SSN)
+CREATE VIEW EmployeeDirectory AS
+SELECT emp_id, name, email FROM Employees;
+
+-- Grant access to the view only; never grant access to the base table
+GRANT SELECT ON EmployeeDirectory TO hr_reporting_role;
+REVOKE ALL ON Employees FROM hr_reporting_role;</div>
+
+      <h2>Part 2: Indexing</h2>
+
+      <h2>What Is an Index?</h2>
+      <p>
+        An index is a separate data structure built on one or more columns of a table.
+        It allows the DBMS to find rows matching a predicate without scanning every row in the table.
+        Think of it as a sorted lookup table mapping column values to physical row locations (heap pointers).
+      </p>
+      <p>
+        Every index trades write overhead and storage space for faster reads.
+        Adding an index always slows down INSERT, UPDATE, and DELETE on the indexed columns
+        because the index must be maintained in sync with the table.
+      </p>
+
+      <h2>B-Tree Index — The Default</h2>
+      <p>
+        The vast majority of database indexes are B-trees (technically B+ trees).
+        A B+ tree is a balanced tree where:
+      </p>
       <ul>
-        <li><strong>Performance:</strong> Complex views with joins can be slow</li>
-        <li><strong>Update Limitations:</strong> Some views cannot be updated directly</li>
-        <li><strong>Maintenance:</strong> Changes to base tables affect dependent views</li>
+        <li>All leaf nodes are at the same depth (balanced).</li>
+        <li>Leaf nodes contain (key value, row pointer) pairs, sorted by key value.</li>
+        <li>Leaf nodes are linked in a doubly-linked list for efficient range scans.</li>
+        <li>Internal nodes contain only routing keys to guide tree traversal.</li>
       </ul>
+      <div class="code-block">-- Conceptual B+ tree for index on Students(gpa):
 
-      <h2>Updatable Views</h2>
+Internal:   [7.5 | 8.5]
+Leaf:  ...  [6.8,r12] [7.1,r3] -- [7.5,r8] [8.2,r5] -- [8.5,r1] [9.0,r7] [9.5,r2]
+                                   linked list &rarr; &rarr; &rarr;
+
+-- Finding WHERE gpa = 8.2: traverse tree &rarr; reach leaf &rarr; find r5 &rarr; fetch row
+-- Finding WHERE gpa BETWEEN 7.0 AND 8.0: traverse to 7.0 &rarr; scan linked list to 8.0</div>
+      <p>B-tree indexes support: equality (=), range (&lt;, &gt;, BETWEEN), ORDER BY (if sorted correctly), and prefix LIKE searches (<code>LIKE 'M%'</code>).</p>
+
+      <h2>Creating Indexes</h2>
+      <div class="code-block">-- Single-column index
+CREATE INDEX idx_students_dept ON Students(dept_id);
+
+-- Multi-column (composite) index
+CREATE INDEX idx_enroll_student_sem ON Enrollments(student_id, semester);
+
+-- Unique index (enforces uniqueness like UNIQUE constraint)
+CREATE UNIQUE INDEX idx_students_email ON Students(email);
+
+-- Partial index (only indexes rows matching a condition)
+CREATE INDEX idx_active_students ON Students(dept_id) WHERE status = 'active';
+
+-- Expression (functional) index
+CREATE INDEX idx_lower_email ON Students(LOWER(email));
+-- Now WHERE LOWER(email) = 'mudit@example.com' can use this index
+
+-- Dropping an index
+DROP INDEX idx_students_dept;</div>
+
+      <h2>Composite Index: Column Order Matters</h2>
       <p>
-        Simple views can be updated (INSERT, UPDATE, DELETE) if they meet certain conditions. Complex views with joins or aggregations are typically read-only.
+        A composite index on (A, B, C) is sorted first by A, then by B within the same A,
+        then by C within the same A and B.
+        Queries can use the index from the left. This is called the "leading column" rule.
       </p>
-      <div class="code-block">
-<pre>-- Updatable view (simple, single table)
-UPDATE ActiveStudents 
-SET email = 'newemail@example.com' 
-WHERE student_id = 5;</pre>
-      </div>
+      <div class="code-block">CREATE INDEX idx_enroll ON Enrollments(student_id, semester, course_id);
 
-      <h2>Dropping Views</h2>
-      <div class="code-block">
-<pre>DROP VIEW StudentCourseStats;
-DROP VIEW IF EXISTS StudentCourseStats; -- Safe drop</pre>
-      </div>
+-- Can USE the index:
+WHERE student_id = 101                     -- leading column only
+WHERE student_id = 101 AND semester = '2026S1'
+WHERE student_id = 101 AND semester = '2026S1' AND course_id = 5
 
-      <h2>Indexing Deep Dive</h2>
+-- CANNOT efficiently use the index:
+WHERE semester = '2026S1'                  -- skips leading column
+WHERE course_id = 5                       -- skips both leading columns</div>
+
+      <h2>Clustered vs Non-Clustered Index</h2>
       <p>
-        An index is an on-disk data structure that speeds up data retrieval. It maps values to row locations, allowing the DBMS to find data without scanning all rows.
+        A <strong>clustered index</strong> determines the physical order in which rows are stored on disk.
+        The leaf nodes <em>are</em> the actual table rows.
+        There can be only one clustered index per table (the rows can only be in one order).
+        In MySQL InnoDB, the primary key is always the clustered index.
       </p>
+      <p>
+        A <strong>non-clustered index</strong> stores key values and pointers to the heap (or to the clustered index key).
+        There can be many non-clustered indexes per table.
+        A non-clustered index lookup requires an extra step to fetch the actual row from the heap.
+      </p>
+      <table>
+        <tr><th>Property</th><th>Clustered Index</th><th>Non-Clustered Index</th></tr>
+        <tr><td>Row storage order</td><td>Determines physical order</td><td>No effect on row order</td></tr>
+        <tr><td>Per table</td><td>Only one</td><td>Many (up to DBMS limit)</td></tr>
+        <tr><td>Lookup cost</td><td>No heap fetch needed</td><td>Extra heap fetch (key lookup)</td></tr>
+        <tr><td>Range scans</td><td>Very efficient</td><td>Efficient with covering index, otherwise many heap fetches</td></tr>
+      </table>
+
+      <h2>Covering Index</h2>
+      <p>
+        A covering index includes all columns referenced in a query (SELECT list + WHERE + JOIN + ORDER BY),
+        so the DBMS can answer the query entirely from the index without reading the heap at all.
+      </p>
+      <div class="code-block">-- Query: get dept_id and gpa for active students
+SELECT dept_id, gpa FROM Students WHERE status = 'active';
+
+-- Covering index: includes all three columns referenced
+CREATE INDEX idx_cover ON Students(status, dept_id, gpa);
+-- The index stores (status, dept_id, gpa) -- all needed columns are in the index leaf.
+-- No heap fetch required -- index-only scan.</div>
 
       <h2>Hash Index</h2>
       <p>
-        Uses a hash function to distribute values. Excellent for equality searches but doesn't support range queries.
+        A hash index stores (key value, row pointer) in a hash table.
+        Lookups are O(1) for exact equality matches but cannot serve range queries or ORDER BY.
       </p>
-      <div class="code-block">
-<pre>CREATE INDEX idx_email_hash ON Students USING HASH (email);</pre>
-      </div>
+      <div class="code-block">-- PostgreSQL supports hash indexes
+CREATE INDEX idx_hash_email ON Students USING HASH (email);
 
-      <h2>B-Tree Index</h2>
-      <p>
-        Balanced tree structure — the most common index type. Supports both equality and range queries. Self-balancing ensures logarithmic search time.
-      </p>
-      <div class="code-block">
-<pre>CREATE INDEX idx_age ON Students (age);
-SELECT * FROM Students WHERE age BETWEEN 20 AND 25; -- Uses index</pre>
-      </div>
+-- Effective for: WHERE email = 'x@example.com'
+-- NOT effective for: WHERE email &lt; 'n...' or ORDER BY email</div>
 
       <h2>Bitmap Index</h2>
       <p>
-        Uses bit vectors (0s and 1s) to represent data. Efficient for columns with low cardinality (few distinct values).
+        A bitmap index stores a bit array (vector) per distinct value of a column.
+        Each bit in the vector corresponds to one row in the table: 1 means the row has that value, 0 means it doesn't.
+        Very efficient for low-cardinality columns in analytical (OLAP) databases.
+        Not suitable for OLTP tables with frequent inserts/updates because the entire bitmap for a value must be rewritten on every change.
       </p>
-      <div class="code-block">
-<pre>CREATE BITMAP INDEX idx_status ON Students (status);
--- Good for status='active' or status='inactive'</pre>
-      </div>
+      <div class="code-block">-- Example: status column with values 'active', 'inactive', 'graduated'
+-- Bitmap for 'active':    1 0 1 1 0 0 1 ...  (rows where status = 'active')
+-- Bitmap for 'inactive':  0 1 0 0 1 0 0 ...
+-- Bitmap for 'graduated': 0 0 0 0 0 1 0 ...
+
+-- Combining two conditions with AND/OR = bitwise AND/OR on the bitmaps -- very fast
+WHERE status = 'active' AND dept_id = 3
+-- = bitmap_active AND bitmap_dept_3</div>
 
       <h2>Full-Text Index</h2>
       <p>
-        Optimized for full-text search on document or text columns.
+        Full-text indexes enable natural-language search over large text columns.
+        Instead of a B-tree on the raw text, the DBMS builds an inverted index: a mapping of each word to the rows that contain it.
       </p>
-      <div class="code-block">
-<pre>CREATE FULLTEXT INDEX idx_article_content 
-ON Articles (content);
+      <div class="code-block">-- MySQL full-text index
+CREATE FULLTEXT INDEX ft_articles ON Articles(title, body);
 
-SELECT * FROM Articles 
-WHERE MATCH(content) AGAINST('database' IN BOOLEAN MODE);</pre>
-      </div>
+SELECT * FROM Articles
+WHERE MATCH(title, body) AGAINST('database normalization' IN NATURAL LANGUAGE MODE);</div>
 
-      <h2>Composite Index Strategy</h2>
+      <h2>Index Selection Guidelines</h2>
+      <ol>
+        <li><strong>Index foreign keys:</strong> JOINs on FK columns are very common. Without an index, every join scans the child table.</li>
+        <li><strong>Index high-cardinality columns used in WHERE:</strong> The more distinct values a column has, the more selective the index.</li>
+        <li><strong>Composite index column order:</strong> Put the most selective condition first, or put equality conditions before range conditions.</li>
+        <li><strong>Use covering indexes for critical hot paths:</strong> Eliminate heap fetches for very frequent, latency-sensitive queries.</li>
+        <li><strong>Do not over-index write-heavy tables:</strong> Each index adds overhead to every INSERT, UPDATE, DELETE.</li>
+        <li><strong>Remove unused indexes:</strong> Check pg_stat_user_indexes (PostgreSQL) or sys.dm_db_index_usage_stats (SQL Server) for indexes never used by the optimizer.</li>
+        <li><strong>Partial indexes for subset queries:</strong> If you always filter by <code>status = 'active'</code>, index only active rows — smaller index, faster scans.</li>
+      </ol>
+
+      <h2>Indexing and NULL Values</h2>
       <p>
-        Multi-column indexes optimize queries that filter on multiple columns. Order matters!
+        In most DBMS, B-tree indexes include NULL values. Some DBMS (Oracle) exclude NULLs from single-column B-tree indexes by default.
+        Queries using <code>IS NULL</code> may or may not use an index depending on the DBMS.
+        If you frequently query for NULL values, verify the behavior for your specific DBMS version.
       </p>
-      <div class="code-block">
-<pre>-- Create composite index with good selectivity first
-CREATE INDEX idx_dept_salary ON Employees(department_id, salary);
 
--- This query can use the composite index efficiently
-SELECT * FROM Employees 
-WHERE department_id = 5 AND salary > 50000;</pre>
-      </div>
-
-      <h2>Index Maintenance</h2>
-      <p>
-        Indexes must be maintained as data changes (INSERT, UPDATE, DELETE). This has performance overhead.
-      </p>
+      <h2>What You Should Remember</h2>
       <ul>
-        <li><strong>Rebuild Index:</strong> Reorganizes entire index for optimal performance</li>
-        <li><strong>Defrag Index:</strong> Consolidates fragmented index pages</li>
-      </ul>
-      <div class="code-block">
-<pre>-- MySQL
-OPTIMIZE TABLE Students;
-
--- PostgreSQL
-REINDEX INDEX idx_age;
-
--- SQL Server
-ALTER INDEX idx_age ON Students REBUILD;</pre>
-      </div>
-
-      <h2>Index Best Practices</h2>
-      <ul>
-        <li>Index columns used in WHERE, JOIN, and ORDER BY clauses</li>
-        <li>Don't index low-cardinality columns (e.g., gender with only 2 values)</li>
-        <li>Avoid indexing columns updated frequently</li>
-        <li>Regular index maintenance for large tables</li>
-        <li>Monitor index usage; remove unused indexes</li>
-        <li>Balance between read performance (more indexes) and write performance (fewer indexes)</li>
+        <li>Views are virtual tables. They simplify queries, enforce security, and provide logical independence from schema changes.</li>
+        <li>Updatable views require a single base table, no aggregation, no DISTINCT. Use WITH CHECK OPTION to prevent unsafe updates.</li>
+        <li>Materialized views store precomputed results — faster reads, stale data until refreshed. Good for reporting workloads.</li>
+        <li>B-tree indexes support equality, range, ORDER BY, and prefix LIKE. They are the default for most indexes.</li>
+        <li>Clustered index stores rows in sorted order — one per table. Non-clustered indexes are separate structures that point to rows.</li>
+        <li>Covering indexes eliminate heap fetches by including all columns needed by a query.</li>
+        <li>Hash indexes are O(1) for equality only. Bitmap indexes are efficient for low-cardinality OLAP columns.</li>
+        <li>Composite index column order follows the leading column rule — queries that skip leading columns cannot use the index efficiently.</li>
       </ul>
 
-      <h2>Summary</h2>
-      <p>
-        Views provide logical abstraction and security, while indexes dramatically improve query performance. Understanding when and how to use both is essential for designing databases that are secure, maintainable, and performant. Views hide complexity; indexes accelerate complexity.
-      </p>
-      <p>
-        In the next article, we'll explore NoSQL databases, an alternative approach to data storage for non-relational scenarios.
-      </p>
+      <p>Next: NoSQL Databases — when relational is not the right fit.</p>
     </article>
   </main>
 
   <footer style="text-align: center; padding: 2rem; color: #666; border-top: 1px solid #eee; margin-top: 3rem;">
-    <p>&copy; 2024 Mudit Gupta. All rights reserved.</p>
+    <p>&copy; 2026 Mudit Gupta. All rights reserved.</p>
   </footer>
 </body>
 </html>

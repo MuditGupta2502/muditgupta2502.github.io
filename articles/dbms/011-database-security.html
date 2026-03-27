@@ -1,19 +1,25 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta http-equiv="X-UA-Compatible" content="IE=edge" />
-  <title>Database Security | Mudit Gupta</title>
-  <meta name="description" content="Database security practices, authentication, authorization, encryption, and compliance." />
+  <title>Database Security & Transactions | Mudit Gupta</title>
+  <meta name="description" content="Comprehensive database security: SQL injection, prepared statements, GRANT/REVOKE, RBAC, views as access control, encryption, audit logging, transactions, ACID, and concurrency control." />
   <link rel="stylesheet" href="/assets/css/articles.css" />
   <style>
     .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
     .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; color: #1a1a1a; }
+    .article-content h3 { margin-top: 1.5rem; margin-bottom: 0.75rem; color: #1a1a1a; }
     .article-content p { margin-bottom: 1rem; color: #333; }
     .article-content ul, .article-content ol { margin-left: 2rem; margin-bottom: 1rem; }
     .article-content li { margin-bottom: 0.5rem; }
-    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; white-space: pre; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    table th, table td { border: 1px solid #ddd; padding: 0.75rem; text-align: left; }
+    table th { background: #f0f0f0; font-weight: 600; }
+    .note-box { background: #fff8e1; border-left: 4px solid #f9a825; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .danger-box { background: #ffebee; border-left: 4px solid #e53935; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
   </style>
 </head>
 <body>
@@ -29,240 +35,411 @@
   <main>
     <article class="article-content">
       <p class="kicker">DBMS Series | Part 011</p>
-      <h1>Database Security: Protecting Data at Every Layer</h1>
-      <p class="meta">Security & Compliance | 11 min read</p>
+      <h1>Database Security, Transactions &amp; Concurrency Control</h1>
+      <p class="meta">Security &amp; Reliability | 25 min read</p>
 
-      <h2>Why Database Security Matters</h2>
+      <h2>Part 1: Transactions and ACID</h2>
+
+      <h2>What Is a Transaction?</h2>
       <p>
-        Databases often contain sensitive data — personal information, financial records, trade secrets. A breach can result in financial loss, legal liability, reputational damage, and loss of customer trust.
+        A transaction is a sequence of one or more database operations that must be executed as a single logical unit of work.
+        Either all operations succeed (COMMIT), or none of them take effect (ROLLBACK).
+        Transactions are the fundamental mechanism for maintaining data integrity in the presence of errors and concurrent access.
       </p>
+      <div class="code-block">-- Classic bank transfer: must be atomic
+BEGIN;
+  UPDATE Accounts SET balance = balance - 500 WHERE account_id = 1;  -- debit
+  UPDATE Accounts SET balance = balance + 500 WHERE account_id = 2;  -- credit
+COMMIT;  -- both succeed together
+
+-- If anything fails between the two statements:
+ROLLBACK;  -- balance returns to pre-transaction state; money neither lost nor created</div>
+
+      <h2>ACID Properties</h2>
+
+      <h3>Atomicity</h3>
       <p>
-        <strong>Security Must Address:</strong>
+        A transaction is atomic: either all of its operations are applied, or none are.
+        If the server crashes after the debit but before the credit, the DBMS recovery system uses the transaction log
+        to roll back the partial transaction on restart. The debit either never happened, or both operations complete.
       </p>
+
+      <h3>Consistency</h3>
+      <p>
+        A transaction takes the database from one valid state to another valid state.
+        All constraints (keys, foreign keys, checks, triggers) must hold true before and after the transaction.
+        If a transaction would violate a constraint, it is aborted.
+      </p>
+
+      <h3>Isolation</h3>
+      <p>
+        Concurrent transactions behave as if they execute serially — one at a time.
+        Uncommitted changes from one transaction should not be visible to another.
+        In practice, isolation is tunable: stronger isolation is safer but slower; weaker isolation is faster but can produce anomalies.
+      </p>
+
+      <h3>Durability</h3>
+      <p>
+        Once a transaction is committed, it persists even if the system crashes immediately after.
+        The DBMS achieves durability by writing to a Write-Ahead Log (WAL) before modifying actual data pages.
+        On recovery, the WAL is replayed to restore the committed state.
+      </p>
+
+      <h2>Transaction Isolation Levels and Read Anomalies</h2>
+      <p>
+        SQL defines four isolation levels. Higher isolation levels prevent more anomalies but require more locking or versioning overhead.
+      </p>
+
+      <h3>Anomalies Explained</h3>
       <ul>
-        <li><strong>Confidentiality:</strong> Data visible only to authorized users</li>
-        <li><strong>Integrity:</strong> Data remains accurate and unchanged by unauthorized parties</li>
-        <li><strong>Availability:</strong> Authorized users can access data when needed</li>
+        <li><strong>Dirty Read:</strong> Transaction T2 reads a value written by T1 before T1 commits. If T1 rolls back, T2 has read data that never existed.</li>
+        <li><strong>Non-Repeatable Read:</strong> T2 reads a row, T1 updates and commits that row, T2 reads again and sees a different value.</li>
+        <li><strong>Phantom Read:</strong> T2 executes a range query, T1 inserts a row matching the range and commits, T2 re-executes the same query and sees an additional row.</li>
+        <li><strong>Lost Update:</strong> T1 and T2 both read a value, compute new values, and write back. T1's write is overwritten by T2 without T1's update being applied.</li>
       </ul>
 
-      <h2>Authentication</h2>
+      <table>
+        <tr><th>Isolation Level</th><th>Dirty Read</th><th>Non-Repeatable Read</th><th>Phantom Read</th></tr>
+        <tr><td>READ UNCOMMITTED</td><td>Possible</td><td>Possible</td><td>Possible</td></tr>
+        <tr><td>READ COMMITTED</td><td>Prevented</td><td>Possible</td><td>Possible</td></tr>
+        <tr><td>REPEATABLE READ</td><td>Prevented</td><td>Prevented</td><td>Possible (varies by DBMS)</td></tr>
+        <tr><td>SERIALIZABLE</td><td>Prevented</td><td>Prevented</td><td>Prevented</td></tr>
+      </table>
+      <div class="code-block">-- Set isolation level in PostgreSQL
+SET TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+BEGIN;
+  -- reads here are consistent for the duration of this transaction
+COMMIT;</div>
+
+      <h2>Concurrency Control: Locking</h2>
       <p>
-        Authentication verifies the identity of users before granting access.
+        Two-Phase Locking (2PL) is the classic concurrency control protocol.
+        Each transaction has two phases:
       </p>
-      <p>
-        <strong>Methods:</strong>
-      </p>
+      <ol>
+        <li><strong>Growing phase:</strong> The transaction acquires locks but does not release any.</li>
+        <li><strong>Shrinking phase:</strong> The transaction releases locks but acquires no new ones.</li>
+      </ol>
+      <p>2PL guarantees serializability but can lead to deadlocks.</p>
+
+      <h3>Lock Types</h3>
       <ul>
-        <li><strong>Username/Password:</strong> Most common, should be hashed and salted</li>
-        <li><strong>Multi-Factor Authentication (MFA):</strong> Requires additional verification (OTP, biometrics)</li>
-        <li><strong>OAuth/LDAP:</strong> Centralized authentication through external providers</li>
-        <li><strong>Certificate-Based:</strong> X.509 certificates for secure connections</li>
+        <li><strong>Shared lock (S-lock / read lock):</strong> Multiple transactions can hold a shared lock on the same row simultaneously. Prevents others from writing, not reading.</li>
+        <li><strong>Exclusive lock (X-lock / write lock):</strong> Only one transaction can hold this. Prevents any other reads or writes on the row.</li>
+      </ul>
+      <table>
+        <tr><th>Requested \ Held</th><th>Shared</th><th>Exclusive</th></tr>
+        <tr><td>Shared</td><td>Compatible (grant)</td><td>Incompatible (wait)</td></tr>
+        <tr><td>Exclusive</td><td>Incompatible (wait)</td><td>Incompatible (wait)</td></tr>
+      </table>
+
+      <h3>Deadlock</h3>
+      <p>
+        A deadlock occurs when two or more transactions are each waiting for a lock held by the other.
+        The DBMS detects deadlocks using a wait-for graph and resolves them by aborting the cheapest transaction (the victim).
+      </p>
+      <div class="code-block">-- Deadlock scenario
+T1: Lock row A &rarr; try to lock row B (waits for T2)
+T2: Lock row B &rarr; try to lock row A (waits for T1)
+-- Neither can proceed. DBMS detects the cycle and aborts one transaction.</div>
+
+      <h3>MVCC (Multi-Version Concurrency Control)</h3>
+      <p>
+        PostgreSQL, MySQL InnoDB, and Oracle use MVCC as an alternative to pure locking.
+        When a row is updated, the DBMS does not immediately overwrite it.
+        Instead, it creates a new version of the row and marks the old version as superseded.
+        Readers can access the old version; writers work on the new version.
+        This allows reads and writes to proceed concurrently without blocking each other.
+      </p>
+
+      <h2>Part 2: Database Security</h2>
+
+      <h2>The CIA Triad in Database Context</h2>
+      <ul>
+        <li><strong>Confidentiality:</strong> Only authorized users can read sensitive data.</li>
+        <li><strong>Integrity:</strong> Data can only be modified according to defined rules by authorized parties.</li>
+        <li><strong>Availability:</strong> Authorized users can access data when needed. Backups and replication support this.</li>
       </ul>
 
-      <h3>Strong Password Policies</h3>
-      <div class="code-block">
-<pre>-- Requirements for strong passwords
-- Minimum 12 characters
-- Mix of uppercase, lowercase, numbers, symbols
-- No dictionary words or personal information
-- Regular password changes (e.g., 90 days)
-- Password history (prevent reuse)</pre>
+      <h2>SQL Injection</h2>
+      <p>
+        SQL injection is the most dangerous database vulnerability.
+        It occurs when user-supplied input is directly interpolated into a SQL string,
+        allowing attackers to modify the query structure.
+      </p>
+      <div class="danger-box">
+        Never concatenate user input directly into SQL strings. This applies to all languages and all databases.
       </div>
+      <div class="code-block">-- Vulnerable code (Python example)
+query = "SELECT * FROM Users WHERE username='" + username + "' AND password='" + password + "'"
 
-      <h2>Authorization & Access Control</h2>
+-- If username = "admin'--"
+-- The query becomes:
+SELECT * FROM Users WHERE username='admin'--' AND password='...'
+-- The -- comments out the password check. Admin access granted with any password.
+
+-- Destructive injection: username = "'; DROP TABLE Users;--"
+SELECT * FROM Users WHERE username=''; DROP TABLE Users;--'
+-- Drops the entire Users table.</div>
+
+      <h3>Prevention: Prepared Statements / Parameterized Queries</h3>
       <p>
-        Authorization determines what authenticated users can do. The principle of least privilege (PoLP) ensures users get only the minimum necessary access.
+        With parameterized queries, the SQL structure is sent to the DBMS first (compiled once),
+        and user values are sent separately as parameters. The query structure cannot be modified by any parameter value.
       </p>
+      <div class="code-block">-- Python with psycopg2 (PostgreSQL)
+cursor.execute(
+    "SELECT * FROM Users WHERE username = %s AND password_hash = %s",
+    (username, hashed_password)  -- parameters are separate from the query string
+)
 
-      <h3>Role-Based Access Control (RBAC)</h3>
-      <div class="code-block">
-<pre>-- Define roles with specific permissions
-CREATE ROLE admin;
-CREATE ROLE analyst;
-CREATE ROLE viewer;
+-- Java with JDBC
+PreparedStatement stmt = conn.prepareStatement(
+    "SELECT * FROM Users WHERE username = ? AND password_hash = ?"
+);
+stmt.setString(1, username);
+stmt.setString(2, hashedPassword);
 
--- Grant permissions to roles
-GRANT SELECT, INSERT, UPDATE, DELETE ON database.* TO admin;
-GRANT SELECT ON database.* TO analyst;
-GRANT SELECT ON reports.* TO viewer;
+-- PHP with PDO
+$stmt = $pdo->prepare("SELECT * FROM Users WHERE username = :user AND password_hash = :pass");
+$stmt->execute([':user' => $username, ':pass' => $hashedPassword]);</div>
+
+      <h2>Authentication and Authorization</h2>
+
+      <h3>Authentication — Verifying Identity</h3>
+      <p>
+        Before granting any access, the DBMS must verify who the connecting user is.
+      </p>
+      <ul>
+        <li><strong>Password-based auth:</strong> Create dedicated database users with strong passwords. Never use root for application connections.</li>
+        <li><strong>Certificate-based auth (SSL/TLS):</strong> Client presents a certificate that the DBMS verifies.</li>
+        <li><strong>IAM/SSO integration:</strong> Cloud databases (RDS, Cloud SQL) can use IAM roles instead of database passwords.</li>
+        <li><strong>Peer authentication (PostgreSQL):</strong> Uses OS user identity on local connections.</li>
+      </ul>
+      <div class="code-block">-- Create a restricted application user (PostgreSQL)
+CREATE USER app_user WITH PASSWORD 'SecureRandomPassword123!';
+
+-- Never connect applications with superuser credentials
+-- Bad practice:
+-- Connect as: postgres (superuser)
+
+-- Good practice:
+-- Connect as: app_user (minimal privileges)</div>
+
+      <h3>Authorization — What Users Can Do</h3>
+      <p>
+        Authorization is controlled by the GRANT and REVOKE system.
+        The principle of least privilege: grant only the permissions actually needed, nothing more.
+      </p>
+      <div class="code-block">-- Grant DML on specific tables only
+GRANT SELECT, INSERT, UPDATE ON Students TO app_user;
+GRANT SELECT ON Departments TO app_user;
+
+-- Grant execute on a stored procedure (not direct table access)
+GRANT EXECUTE ON PROCEDURE enroll_student TO app_user;
+
+-- Grant SELECT on a view (not the underlying table)
+GRANT SELECT ON StudentEnrollmentSummary TO reporting_user;
+
+-- Revoke a privilege
+REVOKE DELETE ON Students FROM app_user;
+
+-- Check grants in PostgreSQL
+SELECT grantee, table_name, privilege_type
+FROM information_schema.role_table_grants
+WHERE grantee = 'app_user';</div>
+
+      <h2>Role-Based Access Control (RBAC)</h2>
+      <p>
+        Managing privileges per-user does not scale. RBAC assigns privileges to roles,
+        then assigns roles to users. When a user's job changes, you change role membership — not individual grants.
+      </p>
+      <div class="code-block">-- Create roles
+CREATE ROLE read_only;
+CREATE ROLE data_entry;
+CREATE ROLE db_admin;
+
+-- Assign privileges to roles
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO read_only;
+GRANT SELECT, INSERT, UPDATE ON Students, Enrollments TO data_entry;
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO db_admin;
 
 -- Assign roles to users
-GRANT admin TO user1;
-GRANT analyst TO user2;
-GRANT viewer TO user3;</pre>
-      </div>
+GRANT read_only TO analyst_user;
+GRANT data_entry TO enrollment_staff;
+GRANT db_admin TO dba_user;
 
-      <h3>Attribute-Based Access Control (ABAC)</h3>
-      <p>
-        Grants access based on user attributes, resource attributes, and environmental conditions.
-      </p>
-      <div class="code-block">
-<pre>-- Grant select on employees table only to HR department users during business hours
-IF (user.department = 'HR' AND time BETWEEN '9:00' AND '17:00')
-  ALLOW SELECT ON Employees</pre>
-      </div>
-
-      <h2>Column-Level Security</h2>
-      <p>
-        Hide sensitive columns from unauthorized users. A customer service representative sees names but not credit card numbers.
-      </p>
-      <div class="code-block">
-<pre>-- Create a view that hides credit card numbers
-CREATE VIEW SafeCustomers AS
-SELECT customer_id, name, email, phone
-FROM Customers;
-
-GRANT SELECT ON SafeCustomers TO customer_service_role;</pre>
-      </div>
+-- Revoke role from user when role changes
+REVOKE data_entry FROM enrollment_staff;
+GRANT read_only TO enrollment_staff;</div>
 
       <h2>Row-Level Security (RLS)</h2>
       <p>
-        Control row access based on user attributes. A sales manager sees only their team's data.
+        Row-level security restricts which rows a user can see or modify, even within a table they have SELECT permissions on.
+        This is useful for multi-tenant databases where each tenant should only see their own data.
       </p>
-      <div class="code-block">
-<pre>-- SQL Server example
-CREATE SECURITY POLICY SalesRLS
-ADD FILTER PREDICATE dbo.fn_securitypredicate(user_id)
-ON dbo.Sales
-WITH (STATE = ON);</pre>
-      </div>
+      <div class="code-block">-- PostgreSQL row-level security
+ALTER TABLE Orders ENABLE ROW LEVEL SECURITY;
+
+-- Policy: users only see orders belonging to their organization
+CREATE POLICY orders_tenant_isolation ON Orders
+    USING (org_id = current_setting('app.current_org_id')::INT);
+
+-- When querying as a tenant user, only their rows are visible
+SET app.current_org_id = 42;
+SELECT * FROM Orders;  -- Returns only orders where org_id = 42</div>
+
+      <h2>Views as a Security Layer</h2>
+      <p>
+        Views provide column-level and row-level filtering without requiring row-level security.
+        The pattern: grant users access to views only; never grant direct table access.
+      </p>
+      <div class="code-block">-- Sensitive table
+CREATE TABLE Employees (
+    emp_id INT, name TEXT, email TEXT, salary DECIMAL, ssn CHAR(11)
+);
+
+-- View that hides salary and SSN
+CREATE VIEW PublicEmployeeInfo AS
+SELECT emp_id, name, email FROM Employees;
+
+-- HR view that shows salary but not SSN
+CREATE VIEW HREmployeeView AS
+SELECT emp_id, name, email, salary FROM Employees;
+
+-- Grant access to views only
+GRANT SELECT ON PublicEmployeeInfo TO general_staff;
+GRANT SELECT ON HREmployeeView     TO hr_role;
+-- No one except superusers can SELECT from Employees directly</div>
 
       <h2>Encryption</h2>
 
-      <h3>Data at Rest</h3>
+      <h3>Encryption in Transit (TLS)</h3>
       <p>
-        Encrypt data stored on disk. Even if someone gains physical access to storage devices, data remains unreadable.
+        All connections between the application and the database should use TLS (SSL).
+        Without TLS, credentials and query results travel in plaintext over the network.
       </p>
-      <div class="code-block">
-<pre>-- Transparent Data Encryption (TDE) in SQL Server
-ALTER DATABASE MyDatabase SET ENCRYPTION ON;</pre>
-      </div>
+      <div class="code-block">-- PostgreSQL: require SSL in pg_hba.conf
+hostssl all all 0.0.0.0/0 scram-sha-256
 
-      <h3>Data in Transit</h3>
-      <p>
-        Encrypt data traveling between client and database server using TLS/SSL.
-      </p>
-      <div class="code-block">
-<pre>-- Connect to MySQL with SSL
-mysql -h server.com -u user -p --ssl-mode=REQUIRED</pre>
-      </div>
+-- Connection string with SSL required
+postgresql://app_user:password@db.example.com:5432/university?sslmode=require</div>
 
-      <h3>Data in Use</h3>
+      <h3>Encryption at Rest</h3>
       <p>
-        Encrypt sensitive data (PII, credit cards) at the application level before storing.
+        Encryption at rest protects data if storage media is stolen or improperly decommissioned.
+        Options:
       </p>
-      <div class="code-block">
-<pre>-- Encrypt before storing
-CREATE TABLE Customers (
-  customer_id INT,
-  name VARCHAR(100),
-  ssn VARBINARY(255), -- Encrypted SSN
-  encrypted_at TIMESTAMP
-);
+      <ul>
+        <li><strong>Transparent Data Encryption (TDE):</strong> The DBMS engine encrypts all data files automatically. SQL Server, Oracle, MySQL enterprise edition support this.</li>
+        <li><strong>Table/column-level encryption:</strong> Specific sensitive columns (SSN, credit card) are encrypted with application keys. The DBMS stores ciphertext.</li>
+        <li><strong>Filesystem encryption:</strong> The OS-level (dm-crypt, BitLocker) encrypts the disk the database lives on.</li>
+      </ul>
+      <div class="code-block">-- PostgreSQL pgcrypto: column-level encryption
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
--- Application encrypts SSN before INSERT/UPDATE</pre>
-      </div>
+-- Store encrypted SSN
+INSERT INTO Employees (emp_id, name, ssn_encrypted)
+VALUES (1, 'Mudit', pgp_sym_encrypt('123-45-6789', 'secret-key'));
 
-      <h2>SQL Injection Prevention</h2>
-      <p>
-        SQL injection is a common attack where malicious SQL code is executed through user input.
-      </p>
-      <p>
-        <strong>Vulnerable Code:</strong>
-      </p>
-      <div class="code-block">
-<pre>-- DO NOT DO THIS
-$user_id = $_GET['id'];
-$query = "SELECT * FROM users WHERE id = " . $user_id;
-// Attacker can pass: 1' OR '1'='1</pre>
-      </div>
-
-      <p>
-        <strong>Secure Approach: Parameterized Queries</strong>
-      </p>
-      <div class="code-block">
-<pre>-- Use prepared statements
-$stmt = $conn->prepare("SELECT * FROM users WHERE id = ?");
-$stmt->bind_param("i", $user_id);
-$stmt->execute();</pre>
-      </div>
+-- Decrypt for authorized users
+SELECT emp_id, name, pgp_sym_decrypt(ssn_encrypted::bytea, 'secret-key') AS ssn
+FROM Employees
+WHERE emp_id = 1;</div>
 
       <h2>Audit Logging</h2>
       <p>
-        Log all database activities to detect and investigate unauthorized access.
+        Audit logs record who did what to which data and when.
+        They are essential for compliance (GDPR, HIPAA, SOX) and for forensic investigation after a security incident.
       </p>
-      <div class="code-block">
-<pre>-- Enable audit logging (SQL Server)
-CREATE SERVER AUDIT AuditLog
-TO FILE (FILEPATH = 'C:\Audit\')
-WITH (QUEUE_DELAY = 1000, ON_FAILURE = CONTINUE);
+      <div class="code-block">-- PostgreSQL pgaudit extension (logs specific objects/actions)
+-- In postgresql.conf:
+-- shared_preload_libraries = 'pgaudit'
+-- pgaudit.log = 'read, write, ddl'
 
--- Audit successful logins and data access
-CREATE DATABASE AUDIT SPECIFICATION AuditDataAccess
-FOR SERVER AUDIT AuditLog
-ADD (SELECT, DELETE, UPDATE ON DATABASE::MyDatabase BY PUBLIC);</pre>
+-- Or implement via triggers
+CREATE TABLE AuditLog (
+    log_id      SERIAL PRIMARY KEY,
+    table_name  TEXT,
+    operation   CHAR(1),          -- I = insert, U = update, D = delete
+    changed_by  TEXT DEFAULT current_user,
+    changed_at  TIMESTAMP DEFAULT NOW(),
+    old_data    JSONB,
+    new_data    JSONB
+);
+
+CREATE OR REPLACE FUNCTION log_student_changes()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        INSERT INTO AuditLog(table_name, operation, old_data)
+        VALUES ('Students', 'D', row_to_json(OLD));
+    ELSIF TG_OP = 'UPDATE' THEN
+        INSERT INTO AuditLog(table_name, operation, old_data, new_data)
+        VALUES ('Students', 'U', row_to_json(OLD), row_to_json(NEW));
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER students_audit
+AFTER UPDATE OR DELETE ON Students
+FOR EACH ROW EXECUTE FUNCTION log_student_changes();</div>
+
+      <h2>Backup and Recovery</h2>
+      <p>
+        Security includes availability. The ability to recover from data loss or corruption is critical.
+      </p>
+      <ul>
+        <li><strong>Full backup:</strong> Complete dump of all data. Slowest to create; simplest to restore.</li>
+        <li><strong>Incremental backup:</strong> Only changes since the last backup. Faster to create; slower to restore.</li>
+        <li><strong>Point-in-Time Recovery (PITR):</strong> Combines a base backup with WAL (transaction log) replay to restore to any moment in time.</li>
+        <li><strong>Replication:</strong> A standby server continuously applies changes from the primary. If the primary fails, the standby can take over (failover).</li>
+      </ul>
+      <div class="code-block">-- PostgreSQL: create a base backup
+pg_basebackup -h localhost -U replication_user -D /backups/pg_base -Fp -Xs -P
+
+-- Restore to a specific point in time
+-- In postgresql.conf during recovery:
+-- recovery_target_time = '2026-03-15 14:30:00'</div>
+      <div class="note-box">
+        Test your backups regularly. An untested backup is not a backup — it is a hope.
+        The target is a verified RTO (Recovery Time Objective) and RPO (Recovery Point Objective).
       </div>
 
-      <h2>Backup & Disaster Recovery</h2>
-      <p>
-        Regular encrypted backups ensure data can be restored after incidents like ransomware attacks or hardware failures.
-      </p>
-      <div class="code-block">
-<pre>-- Regular backup schedule
-BACKUP DATABASE MyDatabase
-TO DISK = 'C:\Backups\MyDatabase_full.bak'
-WITH ENCRYPTION (ALGORITHM = AES_256,
-  SERVER CERTIFICATE = MasterKey);</pre>
-      </div>
+      <h2>Security Checklist</h2>
+      <ol>
+        <li>Use parameterized queries everywhere — never concatenate user input into SQL.</li>
+        <li>Apply least-privilege: application users should have only the permissions they need.</li>
+        <li>Use roles to manage permissions at scale.</li>
+        <li>Enforce SSL/TLS for all database connections.</li>
+        <li>Enable encryption at rest for sensitive data.</li>
+        <li>Enable audit logging for sensitive tables and privileged operations.</li>
+        <li>Regularly rotate database passwords and revoke unused accounts.</li>
+        <li>Keep the DBMS engine patched and updated.</li>
+        <li>Test backup and recovery procedures on a schedule.</li>
+        <li>Run applications as non-superuser database accounts.</li>
+      </ol>
 
-      <h2>Network Security</h2>
+      <h2>What You Should Remember</h2>
       <ul>
-        <li><strong>Firewall:</strong> Restrict database ports (default 3306 for MySQL) to trusted IP ranges</li>
-        <li><strong>VPN:</strong> Connect to databases through secure tunnels</li>
-        <li><strong>Disable External Access:</strong> Don't expose databases directly to internet</li>
-        <li><strong>Network Segmentation:</strong> Separate database servers in isolated networks</li>
+        <li>ACID ensures correctness of transactions: Atomicity (all or nothing), Consistency (valid state), Isolation (concurrent transactions appear serial), Durability (committed data survives crashes).</li>
+        <li>Isolation levels trade safety for performance. READ COMMITTED is the common default; SERIALIZABLE is safest; READ UNCOMMITTED is rarely used except in specialized read workloads.</li>
+        <li>2PL guarantees serializability; MVCC allows reads and writes to proceed concurrently without blocking.</li>
+        <li>SQL injection is prevented by parameterized queries, not input sanitization alone.</li>
+        <li>GRANT gives permissions; REVOKE removes them. Use roles (RBAC) to manage access at scale.</li>
+        <li>Views act as a security layer — grant access to views, not base tables, wherever possible.</li>
+        <li>Encrypt data in transit (TLS) and at rest (TDE or column encryption) for sensitive data.</li>
+        <li>Audit logs are mandatory for compliance and forensic investigation.</li>
+        <li>Backups are meaningless unless regularly tested and verified.</li>
       </ul>
 
-      <h2>Compliance Standards</h2>
-      <p>
-        <strong>GDPR (General Data Protection Regulation):</strong> EU regulation protecting personal data. Requires consent, encryption, right to deletion (right to be forgotten).
-      </p>
-      <p>
-        <strong>HIPAA (Health Insurance Portability and Accountability Act):</strong> Protects healthcare data in the US.
-      </p>
-      <p>
-        <strong>PCI DSS (Payment Card Industry Data Security Standard):</strong> Protects credit card data.
-      </p>
-      <p>
-        <strong>SOC 2 (Service Organization Control):</strong> Audit standard for service providers.
-      </p>
-
-      <h2>Security Best Practices Summary</h2>
-      <ul>
-        <li>Change default credentials immediately</li>
-        <li>Keep DBMS updated with security patches</li>
-        <li>Use strong authentication and authorization</li>
-        <li>Encrypt sensitive data (at rest, in transit, in use)</li>
-        <li>Use parameterized queries to prevent SQL injection</li>
-        <li>Enable audit logging for compliance</li>
-        <li>Implement principle of least privilege</li>
-        <li>Regular security testing and penetration testing</li>
-        <li>Regular encrypted backups with off-site copies</li>
-        <li>Monitor database for suspicious activity</li>
-      </ul>
-
-      <h2>Conclusion</h2>
-      <p>
-        Database security is not a one-time implementation but an ongoing process. By implementing layered security controls, enforcing compliance standards, and maintaining vigilant monitoring, you can significantly reduce the risk of data breaches and protect sensitive information.
-      </p>
-      <p>
-        This concludes our comprehensive DBMS series covering fundamentals, design, querying, optimization, and security. With this knowledge, you're equipped to design, implement, and maintain secure, scalable databases for modern applications.
-      </p>
+      <p>This completes the DBMS Fundamentals series. The full series covers the theory and practice needed to design, query, optimize, and secure relational databases.</p>
     </article>
   </main>
 
   <footer style="text-align: center; padding: 2rem; color: #666; border-top: 1px solid #eee; margin-top: 3rem;">
-    <p>&copy; 2024 Mudit Gupta. All rights reserved.</p>
+    <p>&copy; 2026 Mudit Gupta. All rights reserved.</p>
   </footer>
 </body>
 </html>

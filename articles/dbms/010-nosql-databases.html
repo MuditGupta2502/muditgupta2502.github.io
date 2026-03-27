@@ -1,19 +1,24 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta http-equiv="X-UA-Compatible" content="IE=edge" />
   <title>NoSQL Databases | Mudit Gupta</title>
-  <meta name="description" content="Understanding NoSQL databases, types, CAP theorem, and when to use them." />
+  <meta name="description" content="Deep guide to NoSQL databases: CAP theorem, ACID vs BASE, document stores, key-value, column-family, graph databases, and when to use each model." />
   <link rel="stylesheet" href="/assets/css/articles.css" />
   <style>
     .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
     .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; color: #1a1a1a; }
+    .article-content h3 { margin-top: 1.5rem; margin-bottom: 0.75rem; color: #1a1a1a; }
     .article-content p { margin-bottom: 1rem; color: #333; }
     .article-content ul, .article-content ol { margin-left: 2rem; margin-bottom: 1rem; }
     .article-content li { margin-bottom: 0.5rem; }
-    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; white-space: pre; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    table th, table td { border: 1px solid #ddd; padding: 0.75rem; text-align: left; }
+    table th { background: #f0f0f0; font-weight: 600; }
+    .note-box { background: #fff8e1; border-left: 4px solid #f9a825; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
   </style>
 </head>
 <body>
@@ -29,224 +34,272 @@
   <main>
     <article class="article-content">
       <p class="kicker">DBMS Series | Part 010</p>
-      <h1>NoSQL Databases: Beyond Relational Data</h1>
-      <p class="meta">Database Systems | 10 min read</p>
+      <h1>NoSQL Databases: Models, CAP Theorem &amp; When to Use Them</h1>
+      <p class="meta">Database Systems | 24 min read</p>
 
-      <h2>What is NoSQL?</h2>
+      <h2>Why NoSQL Exists</h2>
       <p>
-        NoSQL means "Not Only SQL" — it refers to non-relational databases designed for unstructured or semi-structured data. Instead of rigid tables, NoSQL databases use flexible schemas and horizontal scalability.
+        Relational databases were designed for a world of structured, predictable data and single-server deployments.
+        By the mid-2000s, internet-scale companies — Google, Amazon, Facebook — were confronting workloads that relational engines struggled with:
+        billions of users, petabytes of semi-structured data, globally distributed deployments, and write rates that no single SQL server could absorb.
       </p>
       <p>
-        <strong>Key Characteristics:</strong>
-      </p>
-      <ul>
-        <li>Schema-less or flexible schema</li>
-        <li>Horizontal scalability (spread across servers)</li>
-        <li>High availability and fault tolerance</li>
-        <li>Optimized for specific access patterns</li>
-        <li>Handle large volumes of diverse data types</li>
-      </ul>
-
-      <h2>Why NoSQL?</h2>
-      <p>
-        Relational databases have limitations for certain scenarios:
-      </p>
-      <ul>
-        <li><strong>Scalability:</strong> RDBMS scale vertically (bigger servers); NoSQL scales horizontally (more servers)</li>
-        <li><strong>Flexibility:</strong> RDBMS require schema definition; NoSQL adapts to changing data structures</li>
-        <li><strong>Performance:</strong> NoSQL optimized for specific queries (documents, key-value, graphs)</li>
-        <li><strong>Big Data:</strong> Handling massive datasets across distributed systems</li>
-      </ul>
-
-      <h2>Types of NoSQL Databases</h2>
-
-      <h3>Key-Value Stores</h3>
-      <p>
-        Simplest NoSQL type — stores data as key-value pairs. Extremely fast for direct lookups.
-      </p>
-      <p>
-        <strong>Examples:</strong> Redis, Memcached, DynamoDB
-      </p>
-      <p>
-        <strong>Use Cases:</strong> Caching, sessions, leaderboards, real-time analytics
-      </p>
-      <div class="code-block">
-<pre>-- Redis (pseudo-code)
-SET user:123 {"name": "John", "email": "john@ex.com"}
-GET user:123</pre>
-      </div>
-
-      <h3>Document Databases</h3>
-      <p>
-        Store data as documents (JSON, BSON). Semi-structured, flexible schema, nested data support.
-      </p>
-      <p>
-        <strong>Examples:</strong> MongoDB, CouchDB, Firebase
-      </p>
-      <p>
-        <strong>Use Cases:</strong> Content management, user profiles, logs, catalogs
-      </p>
-      <div class="code-block">
-<pre>-- MongoDB (JavaScript syntax)
-db.students.insertOne({
-  _id: 1,
-  name: "John",
-  email: "john@ex.com",
-  courses: [
-    {course_id: 101, grade: "A"},
-    {course_id: 102, grade: "B"}
-  ]
-});</pre>
-      </div>
-
-      <h3>Column-Family Stores</h3>
-      <p>
-        Organize data by columns instead of rows. Optimized for analytical queries and time-series data.
-      </p>
-      <p>
-        <strong>Examples:</strong> Cassandra, HBase, Bigtable
-      </p>
-      <p>
-        <strong>Use Cases:</strong> Time-series data, analytics, sensor data, logs
-      </p>
-      <div class="code-block">
-<pre>-- Column-family structure
-Students table:
-  Row Key: student_1
-  Column Family: info { name: "John", email: "john@ex.com" }
-  Column Family: grades { math: 90, english: 85 }</pre>
-      </div>
-
-      <h3>Graph Databases</h3>
-      <p>
-        Optimized for relationships and graph traversals. Nodes represent entities, edges represent relationships.
-      </p>
-      <p>
-        <strong>Examples:</strong> Neo4j, Amazon Neptune, ArangoDB
-      </p>
-      <p>
-        <strong>Use Cases:</strong> Social networks, recommendation engines, knowledge graphs, fraud detection
-      </p>
-      <div class="code-block">
-<pre>-- Neo4j (Cypher query language)
-MATCH (user:User)-[:FOLLOWS]->(friend:User)-[:FOLLOWS]->(recommendation:User)
-WHERE user.id = 123
-RETURN recommendation</pre>
-      </div>
-
-      <h3>Search Engines</h3>
-      <p>
-        Specialized NoSQL for full-text search and analytics on text data.
-      </p>
-      <p>
-        <strong>Examples:</strong> Elasticsearch, Solr, Algolia
-      </p>
-      <p>
-        <strong>Use Cases:</strong> Full-text search, log analysis, application search, metrics
+        NoSQL (Not Only SQL) databases emerged to address specific combinations of scale, schema flexibility, and access pattern that relational models handle poorly.
+        They are not replacements for relational databases — they are tools optimized for different problems.
       </p>
 
       <h2>ACID vs BASE</h2>
       <p>
-        <strong>ACID (Relational):</strong> Atomicity, Consistency, Isolation, Durability. Strong guarantees but less scalable.
+        Relational databases are defined by ACID guarantees.
+        Many NoSQL databases trade some of those guarantees for availability and horizontal scalability,
+        following what is called the BASE model.
       </p>
-      <p>
-        <strong>BASE (NoSQL):</strong> Basically Available, Soft-state, Eventually Consistent. Scalable but weaker guarantees.
-      </p>
-      <div class="code-block">
-<pre>ACID: Strong consistency, predictable behavior
-BASE: Eventual consistency, higher availability</pre>
-      </div>
+      <table>
+        <tr><th>Property</th><th>ACID (Relational)</th><th>BASE (Many NoSQL)</th></tr>
+        <tr><td>Atomicity</td><td>All-or-nothing transactions</td><td>Best effort; partial updates may be visible</td></tr>
+        <tr><td>Consistency</td><td>Strict: follows all constraints</td><td>Eventual: converges over time</td></tr>
+        <tr><td>Isolation</td><td>Concurrent txns appear serial</td><td>Varies; often weaker isolation</td></tr>
+        <tr><td>Durability</td><td>Committed data survives failures</td><td>Usually durable; sometimes async replication</td></tr>
+      </table>
+      <ul>
+        <li><strong>BA</strong>sically Available — the system guarantees availability even during partial failures.</li>
+        <li><strong>S</strong>oft state — the state of the system may change over time even without input.</li>
+        <li><strong>E</strong>ventually consistent — given enough time without new writes, all replicas converge to the same value.</li>
+      </ul>
 
       <h2>CAP Theorem</h2>
       <p>
-        The CAP theorem states that a distributed database can guarantee only 2 of 3 properties:
+        CAP theorem (Brewer, 2000) states that a distributed data store can only guarantee two of the following three properties simultaneously:
       </p>
       <ul>
-        <li><strong>Consistency:</strong> All nodes see same data</li>
-        <li><strong>Availability:</strong> System remains operational</li>
-        <li><strong>Partition Tolerance:</strong> Survives network splits</li>
+        <li><strong>Consistency (C):</strong> Every read receives the most recent write or an error. All nodes see the same data at the same time.</li>
+        <li><strong>Availability (A):</strong> Every request receives a (non-error) response, though the data may not be the most recent.</li>
+        <li><strong>Partition Tolerance (P):</strong> The system continues operating even when network partitions split nodes and messages are lost.</li>
       </ul>
-      <p>
-        <strong>Example Choices:</strong>
-      </p>
-      <ul>
-        <li><strong>CP:</strong> Cassandra, MongoDB (consistency over availability)</li>
-        <li><strong>AP:</strong> DynamoDB, Riak (availability over consistency)</li>
-      </ul>
-
-      <h2>Schemaless Design</h2>
-      <p>
-        NoSQL databases don't force schema definition. Documents can have different structures.
-      </p>
-      <div class="code-block">
-<pre>-- MongoDB documents with different structures
-{name: "John", age: 25}
-{name: "Jane", email: "jane@ex.com"}
-{name: "Bob", phone: "+1-555-1234", country: "USA"}</pre>
-      </div>
-      <p>
-        <strong>Advantages:</strong> Flexible, quick iteration
-      </p>
-      <p>
-        <strong>Disadvantages:</strong> Requires application-level validation, harder to enforce data integrity
-      </p>
-
-      <h2>Sharding (Horizontal Scaling)</h2>
-      <p>
-        NoSQL databases scale by distributing data across multiple servers (shards) based on a shard key.
-      </p>
-      <div class="code-block">
-<pre>-- User data sharded by user_id
-Shard 1: users 1-1000
-Shard 2: users 1001-2000
-Shard 3: users 2001-3000</pre>
+      <div class="note-box">
+        In practice, network partitions happen in any distributed system. Partition tolerance is therefore non-negotiable.
+        The real choice is between Consistency and Availability during a partition.
       </div>
 
-      <h2>RDBMS vs NoSQL: When to Use Each</h2>
+      <h3>CAP Classification of Databases</h3>
+      <table>
+        <tr><th>Classification</th><th>Guarantees</th><th>Examples</th></tr>
+        <tr><td>CP (Consistent + Partition-tolerant)</td><td>Returns error or timeout when partition occurs rather than serving stale data</td><td>HBase, Zookeeper, MongoDB (configurable), etcd</td></tr>
+        <tr><td>AP (Available + Partition-tolerant)</td><td>Always responds; may serve stale data during partition</td><td>Cassandra, CouchDB, DynamoDB, Riak</td></tr>
+        <tr><td>CA (Consistent + Available)</td><td>Only possible in a single-server setup — no partition tolerance</td><td>Traditional single-node RDBMS</td></tr>
+      </table>
       <p>
-        <strong>Use RDBMS when:</strong>
+        Real systems are not binary on CAP. Cassandra lets you tune consistency per query:
+        reading from a quorum of nodes is more consistent than reading from a single node.
+        The CAP theorem defines the ceiling of guarantees, not a fixed setting.
       </p>
-      <ul>
-        <li>Data is highly structured and relational (e.g., banking, ERP)</li>
-        <li>ACID compliance is crucial</li>
-        <li>Complex joins and transactions are required</li>
-        <li>Data integrity is paramount</li>
-      </ul>
+
+      <h2>NoSQL Data Models</h2>
+
+      <h3>1. Key-Value Stores</h3>
       <p>
-        <strong>Use NoSQL when:</strong>
+        The simplest NoSQL model: a hash map at scale. Every record is a key-value pair.
+        Keys are unique identifiers; values can be any blob (string, JSON, binary).
+        The database does not interpret the value — that is entirely the application's job.
       </p>
+      <div class="code-block">-- Redis (in-memory key-value store with data structures)
+
+-- Strings
+SET session:123  "{'user':'mudit','role':'admin'}"
+GET session:123  -- returns the JSON string
+EXPIRE session:123 3600   -- auto-delete after 1 hour (TTL)
+
+-- Counters
+INCR page_views:homepage   -- atomic increment (thread-safe)
+INCRBY product_stock:42 -5  -- decrease stock by 5
+
+-- Hashes (field-value pairs under one key)
+HSET user:101 name "Mudit" email "m@example.com" gpa 9.2
+HGET user:101 name  -- "Mudit"
+
+-- Lists (push/pop from either end)
+LPUSH notifications:user:101 "New message"
+RPOP notifications:user:101
+
+-- Sets (unique members)
+SADD enrolled:course:DBMS student:101 student:102
+SMEMBERS enrolled:course:DBMS</div>
+      <p><strong>Best for:</strong> session storage, caching, rate limiting, leaderboards, pub/sub messaging, feature flags.</p>
+      <p><strong>Examples:</strong> Redis, Memcached, Amazon DynamoDB (also supports document mode).</p>
+
+      <h3>2. Document Stores</h3>
+      <p>
+        A document store organizes data as semi-structured documents, typically JSON or BSON.
+        Each document can have its own schema — different documents in the same collection can have different fields.
+        Documents are identified by a unique _id field.
+      </p>
+      <div class="code-block">// MongoDB — insert a document
+db.students.insertOne({
+  _id: ObjectId("64a1b2c3d4e5f6a7b8c9d0e1"),
+  student_id: 101,
+  name: "Mudit",
+  email: "mudit@example.com",
+  gpa: 9.2,
+  dept: {
+    id: 3,
+    name: "Computer Science"   // embedded sub-document
+  },
+  courses: [                   // array of embedded documents
+    { course_id: "C001", name: "DBMS",   grade: "A" },
+    { course_id: "C002", name: "OS",     grade: "B+" }
+  ],
+  tags: ["full-time", "scholarship"]
+});
+
+// Query: students in CS with GPA >= 8.5
+db.students.find({
+  "dept.name": "Computer Science",
+  gpa: { $gte: 8.5 }
+});
+
+// Update: add a new course to the array
+db.students.updateOne(
+  { student_id: 101 },
+  { $push: { courses: { course_id: "C003", name: "Algorithms", grade: null } } }
+);
+
+// Aggregation (similar to SQL GROUP BY)
+db.students.aggregate([
+  { $group: { _id: "$dept.name", avg_gpa: { $avg: "$gpa" }, count: { $sum: 1 } } },
+  { $sort: { avg_gpa: -1 } }
+]);</div>
+      <p><strong>When to use:</strong> Catalogs (products, articles) with variable schema; hierarchical/nested data that would need many JOINs in SQL; rapid schema evolution in early development.</p>
+      <p><strong>Weakness:</strong> Cross-document transactions (multi-document ACID) are available in MongoDB 4+ but less efficient than relational JOINs for heavily relational data.</p>
+      <p><strong>Examples:</strong> MongoDB, Couchbase, Amazon DocumentDB, Firestore.</p>
+
+      <h3>3. Column-Family (Wide-Column) Stores</h3>
+      <p>
+        Column-family databases (often called wide-column stores) group related columns into "column families."
+        Unlike relational databases — where every row has all columns — wide-column stores allow each row to have a different set of column instances.
+        Rows are identified by a row key; within a row, columns can vary.
+      </p>
+      <p>
+        Cassandra's data model is especially important because it is designed to be written fast and distributed.
+        Queries must be designed around Cassandra's partition key and clustering key:
+        the partition key determines which node stores the data;
+        the clustering key determines the sort order within a partition.
+      </p>
+      <div class="code-block">-- Cassandra CQL (Cassandra Query Language)
+
+CREATE KEYSPACE university
+WITH replication = { 'class': 'SimpleStrategy', 'replication_factor': 3 };
+
+-- Table designed for query: "get all enrollments for a student in a semester"
+-- Partition key: student_id -- all data for one student on one node
+-- Clustering key: semester, course_id -- sorted within partition
+CREATE TABLE enrollments (
+    student_id  INT,
+    semester    TEXT,
+    course_id   TEXT,
+    grade       TEXT,
+    PRIMARY KEY (student_id, semester, course_id)
+) WITH CLUSTERING ORDER BY (semester DESC, course_id ASC);
+
+INSERT INTO enrollments (student_id, semester, course_id, grade)
+VALUES (101, '2026S1', 'DBMS', 'A');
+
+-- Efficient: follows partition key
+SELECT * FROM enrollments WHERE student_id = 101 AND semester = '2026S1';
+
+-- Inefficient / not allowed without ALLOW FILTERING:
+-- SELECT * FROM enrollments WHERE grade = 'A'; -- grade is not in PK</div>
+      <p><strong>Design principle:</strong> In Cassandra, model tables around queries, not around normalized entities.
+        Duplication is acceptable; JOINs do not exist.
+      </p>
+      <p><strong>Best for:</strong> Time-series data, event logs, IoT sensor data, write-heavy workloads at massive scale.</p>
+      <p><strong>Examples:</strong> Apache Cassandra, Apache HBase, Google Bigtable, Amazon Keyspaces.</p>
+
+      <h3>4. Graph Databases</h3>
+      <p>
+        A graph database stores data as nodes (entities) and edges (relationships).
+        Both nodes and edges can have properties.
+        Graph databases are optimized for traversal queries — "find all friends of friends within 3 hops"
+        — which in a relational database would require recursive CTEs or repeated self-joins.
+      </p>
+      <div class="code-block">-- Neo4j: Cypher query language
+
+// Create nodes and relationships
+CREATE (mudit:Person { name: 'Mudit', age: 24 })
+CREATE (aisha:Person { name: 'Aisha', age: 23 })
+CREATE (dbms:Course  { name: 'DBMS', code: 'CS301' })
+
+CREATE (mudit)-[:FRIENDS_WITH]->(aisha)
+CREATE (mudit)-[:ENROLLED_IN { grade: 'A', semester: '2026S1' }]->(dbms)
+CREATE (aisha)-[:ENROLLED_IN { grade: 'B+', semester: '2026S1' }]->(dbms)
+
+// Find Mudit's friends and their courses
+MATCH (mudit:Person { name: 'Mudit' })-[:FRIENDS_WITH]->(friend)-[:ENROLLED_IN]->(course)
+RETURN friend.name, course.name
+
+// Find all people within 2 hops of Mudit
+MATCH (mudit:Person { name: 'Mudit' })-[*1..2]-(connected)
+RETURN DISTINCT connected.name
+
+// Shortest path
+MATCH p = shortestPath(
+    (mudit:Person { name: 'Mudit' })-[*]-(target:Person { name: 'Ravi' })
+)
+RETURN p</div>
+      <p><strong>Best for:</strong> Social networks, recommendation engines, fraud detection (unusual connection patterns), knowledge graphs, access control hierarchies, route planning.</p>
+      <p><strong>Examples:</strong> Neo4j, Amazon Neptune, JanusGraph, TigerGraph.</p>
+
+      <h3>5. Time-Series Databases</h3>
+      <p>
+        Time-series databases (TSDB) are optimized for data that is indexed by time.
+        They use specialized compression (successive timestamps/values differ little) and downsampling (reduce old high-resolution data to aggregates).
+      </p>
+      <div class="code-block">-- InfluxDB line protocol
+cpu_usage,host=server01,region=us-east value=72.5 1711483200000000000
+cpu_usage,host=server01,region=us-east value=74.1 1711483260000000000
+
+-- Query using Flux
+from(bucket: "metrics")
+  |> range(start: -1h)
+  |> filter(fn: (r) => r._measurement == "cpu_usage" and r.host == "server01")
+  |> aggregateWindow(every: 5m, fn: mean)</div>
+      <p><strong>Best for:</strong> Infrastructure monitoring, IoT sensors, financial tick data, application performance metrics.</p>
+      <p><strong>Examples:</strong> InfluxDB, TimescaleDB (PostgreSQL extension), Prometheus, OpenTSDB.</p>
+
+      <h2>Choosing the Right Database</h2>
+      <table>
+        <tr><th>Workload / Need</th><th>Best Fit</th><th>Why</th></tr>
+        <tr><td>Transactional records (banking, orders)</td><td>Relational (PostgreSQL, MySQL)</td><td>ACID, complex queries, strong consistency</td></tr>
+        <tr><td>Session / caching</td><td>Key-Value (Redis)</td><td>Sub-millisecond, TTL support, memory speed</td></tr>
+        <tr><td>Variable-schema content (product catalog)</td><td>Document (MongoDB)</td><td>Flexible schema, nested data, easy updates</td></tr>
+        <tr><td>Write-heavy IoT / logs at massive scale</td><td>Column-family (Cassandra)</td><td>Linear horizontal scale, tunable consistency</td></tr>
+        <tr><td>Relationships as first-class data</td><td>Graph (Neo4j)</td><td>Native relationship traversal, no JOINs needed</td></tr>
+        <tr><td>Time-stamped metrics and monitoring</td><td>Time-series (InfluxDB)</td><td>Optimized compression and downsampling</td></tr>
+        <tr><td>Full-text search</td><td>Search engine (Elasticsearch)</td><td>Inverted index, relevance scoring, faceting</td></tr>
+      </table>
+
+      <h2>Multi-Model Databases</h2>
+      <p>
+        Many modern databases support more than one model. PostgreSQL can store JSON documents, act as a key-value store, and handle time-series with extensions.
+        MongoDB has added multi-document ACID transactions.
+        The category boundaries are blurring, but the core strength of each model remains the same.
+      </p>
+
+      <h2>What You Should Remember</h2>
       <ul>
-        <li>Data is unstructured or semi-structured (JSON, logs, media)</li>
-        <li>Horizontal scalability is needed</li>
-        <li>High write throughput required</li>
-        <li>Schema changes frequently</li>
-        <li>Big Data scenarios with massive datasets</li>
+        <li>NoSQL databases sacrifice some ACID guarantees in exchange for horizontal scalability, schema flexibility, or specialized access patterns.</li>
+        <li>CAP theorem: distributed systems can only guarantee two of Consistency, Availability, Partition tolerance. Since partitions are inevitable, the real choice is C vs A during failure.</li>
+        <li>BASE (Basically Available, Soft state, Eventually consistent) describes the consistency model of many NoSQL systems.</li>
+        <li>Key-value stores are fastest for point lookups; document stores handle nested/variable data; column-family stores handle massive write throughput; graph databases handle relationship-heavy queries.</li>
+        <li>In Cassandra, model tables around query patterns, not entities. Denormalization and duplication are intentional design choices.</li>
+        <li>Relational and NoSQL are not enemies — many production systems use both: SQL for transactional data, Redis for caching, Elasticsearch for search, Cassandra for logs.</li>
       </ul>
 
-      <h2>Modern Approach: Polyglot Persistence</h2>
-      <p>
-        Many modern applications use multiple databases for different needs:
-      </p>
-      <ul>
-        <li><strong>RDBMS:</strong> Transactional data (users, accounts)</li>
-        <li><strong>Document DB:</strong> User profiles, content (MongoDB)</li>
-        <li><strong>Cache:</strong> Sessions, frequently accessed data (Redis)</li>
-        <li><strong>Graph DB:</strong> Relationships and recommendations (Neo4j)</li>
-        <li><strong>Search Engine:</strong> Full-text search (Elasticsearch)</li>
-      </ul>
-
-      <h2>Summary</h2>
-      <p>
-        NoSQL databases provide alternatives to relational databases optimized for scale, flexibility, and specific data models. Understanding when and how to use different NoSQL types is essential for building modern data systems. The choice between RDBMS and NoSQL depends on your specific requirements for consistency, availability, scalability, and data structure.
-      </p>
-      <p>
-        In our final article, we'll explore database security, a critical aspect that applies to both relational and NoSQL systems.
-      </p>
+      <p>Next: Database Security — protecting data from unauthorized access, SQL injection, and accidental exposure.</p>
     </article>
   </main>
 
   <footer style="text-align: center; padding: 2rem; color: #666; border-top: 1px solid #eee; margin-top: 3rem;">
-    <p>&copy; 2024 Mudit Gupta. All rights reserved.</p>
+    <p>&copy; 2026 Mudit Gupta. All rights reserved.</p>
   </footer>
 </body>
 </html>

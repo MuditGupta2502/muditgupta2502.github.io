@@ -1,22 +1,24 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta http-equiv="X-UA-Compatible" content="IE=edge" />
   <title>Relational Model & Keys | Mudit Gupta</title>
-  <meta name="description" content="Understanding the Relational Model, keys (Primary, Foreign, Candidate, Composite, Super, Alternate) and their roles in database design." />
+  <meta name="description" content="Deep dive into the Relational Model, all key types, integrity constraints, relational algebra, and functional dependency fundamentals." />
   <link rel="stylesheet" href="/assets/css/articles.css" />
   <style>
     .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
     .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; color: #1a1a1a; }
+    .article-content h3 { margin-top: 1.5rem; margin-bottom: 0.75rem; color: #1a1a1a; }
     .article-content p { margin-bottom: 1rem; color: #333; }
     .article-content ul, .article-content ol { margin-left: 2rem; margin-bottom: 1rem; }
     .article-content li { margin-bottom: 0.5rem; }
-    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; white-space: pre; }
     table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
     table th, table td { border: 1px solid #ddd; padding: 0.75rem; text-align: left; }
-    table th { background: #f0f0f0; }
+    table th { background: #f0f0f0; font-weight: 600; }
+    .note-box { background: #fff8e1; border-left: 4px solid #f9a825; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
   </style>
 </head>
 <body>
@@ -32,208 +34,301 @@
   <main>
     <article class="article-content">
       <p class="kicker">DBMS Series | Part 004</p>
-      <h1>The Relational Model & Keys: Unique Identification in Databases</h1>
-      <p class="meta">Database Design | 11 min read</p>
+      <h1>The Relational Model &amp; Keys: Deep Dive</h1>
+      <p class="meta">Database Design | 20 min read</p>
 
-      <h2>Introduction to the Relational Model</h2>
+      <h2>Foundation: The Relational Model</h2>
       <p>
-        The Relational Model, proposed by E.F. Codd in 1970, is the foundation of modern database systems. It represents data as a collection of tables (relations) with rows (tuples) and columns (attributes).
+        E.F. Codd introduced the relational model in his landmark 1970 paper <em>A Relational Model of Data for Large Shared Data Banks.</em>
+        The model is built on set theory and first-order predicate logic. Data is represented as relations (tables), and
+        operations on data are expressed in relational algebra or relational calculus.
+        The DBMS determines the best physical strategy to answer such requests.
       </p>
       <p>
-        Key features of the Relational Model:
+        The key innovation was separating <em>what</em> data users want from <em>how</em> it is physically stored.
+        This logical independence is why the relational model still dominates transactional software more than fifty years later.
       </p>
-      <ul>
-        <li><strong>Table Structure:</strong> Data organized in rows and columns</li>
-        <li><strong>Atomic Values:</strong> Each attribute contains a single, indivisible value</li>
-        <li><strong>Unique Rows:</strong> No duplicate rows in a table</li>
-        <li><strong>Column Independence:</strong> Columns can be reordered without changing meaning</li>
-        <li><strong>SQL Support:</strong> Standardized query language for manipulation</li>
-      </ul>
 
-      <h2>Terminology</h2>
+      <h2>Core Terminology</h2>
       <table>
-        <tr>
-          <th>Term</th>
-          <th>Definition</th>
-          <th>Example</th>
-        </tr>
-        <tr>
-          <td>Relation</td>
-          <td>A table with rows and columns</td>
-          <td>Student table</td>
-        </tr>
-        <tr>
-          <td>Attribute</td>
-          <td>A column in a relation</td>
-          <td>student_id, name, email</td>
-        </tr>
-        <tr>
-          <td>Tuple</td>
-          <td>A row in a relation</td>
-          <td>One student record</td>
-        </tr>
-        <tr>
-          <td>Domain</td>
-          <td>Set of valid values for an attribute</td>
-          <td>age: 0-150, email: valid format</td>
-        </tr>
-        <tr>
-          <td>Cardinality</td>
-          <td>Number of rows in a relation</td>
-          <td>Table has 500 students</td>
-        </tr>
-        <tr>
-          <td>Degree</td>
-          <td>Number of columns in a relation</td>
-          <td>Student table has 8 attributes</td>
-        </tr>
+        <tr><th>Formal Term</th><th>Common Term</th><th>Meaning</th></tr>
+        <tr><td>Relation</td><td>Table</td><td>A set of tuples sharing the same attributes</td></tr>
+        <tr><td>Tuple</td><td>Row / Record</td><td>A single entry in a relation</td></tr>
+        <tr><td>Attribute</td><td>Column / Field</td><td>A named property in a relation</td></tr>
+        <tr><td>Domain</td><td>Data type + valid values</td><td>Set of permitted values for an attribute</td></tr>
+        <tr><td>Degree</td><td>Arity</td><td>Number of attributes (columns) in a relation</td></tr>
+        <tr><td>Cardinality</td><td>Row count</td><td>Number of tuples currently in the relation</td></tr>
+        <tr><td>Schema</td><td>Table definition</td><td>Name + list of attribute names and their domains</td></tr>
+        <tr><td>Instance</td><td>Table data at a point in time</td><td>The actual set of tuples right now</td></tr>
       </table>
 
-      <h2>Understanding Keys</h2>
+      <h2>Properties of a Relation</h2>
+      <p>A valid relation must satisfy all of the following:</p>
+      <ul>
+        <li><strong>Each cell is atomic:</strong> Every attribute value is a single, indivisible unit. Multi-valued or nested values violate 1NF.</li>
+        <li><strong>Each row is unique:</strong> No two tuples are identical. Enforced by the primary key.</li>
+        <li><strong>Column names are distinct:</strong> Every attribute has a unique name within the relation.</li>
+        <li><strong>Row order is immaterial:</strong> Relations are sets. Physical ordering has no meaning at the logical level.</li>
+        <li><strong>Column order is immaterial:</strong> Columns are identified by name.</li>
+        <li><strong>All values in a column share the same domain.</strong></li>
+      </ul>
+
+      <h2>What Is a Key?</h2>
       <p>
-        A key is an attribute or combination of attributes that uniquely identifies each tuple (row) in a relation. Keys are crucial for maintaining data integrity and establishing relationships between tables.
+        A key is an attribute or minimal set of attributes whose values uniquely identify every tuple in a relation.
+        Keys are the mechanism by which rows are identified without ambiguity, relationships between tables are expressed,
+        and integrity constraints are enforced.
       </p>
 
       <h2>Types of Keys</h2>
-      <p>
-        <strong>Candidate Key:</strong> An attribute or minimal combination of attributes that can uniquely identify each tuple. A relation can have multiple candidate keys.
-      </p>
-      <ul>
-        <li>Minimal: Cannot be reduced further</li>
-        <li>Unique: No two tuples have the same value</li>
-        <li><strong>Example:</strong> In a Student table, both SSN (Social Security Number) and email could be candidate keys</li>
-      </ul>
 
+      <h3>1. Super Key</h3>
       <p>
-        <strong>Primary Key:</strong> The candidate key chosen as the main identifier for a tuple. Only one primary key per relation.
+        A super key is <em>any</em> set of one or more attributes that can uniquely identify each tuple. Super keys are not required to be minimal.
       </p>
-      <ul>
-        <li>Must be unique</li>
-        <li>Cannot be NULL</li>
-        <li>Usually immutable (doesn't change)</li>
-        <li><strong>Example:</strong> student_id is chosen as primary key over email</li>
-      </ul>
+      <div class="code-block">Students(student_id, name, email, phone, dob)
 
-      <p>
-        <strong>Alternate Key:</strong> A candidate key that is not chosen as the primary key.
-      </p>
-      <ul>
-        <li>Also provides unique identification</li>
-        <li><strong>Example:</strong> email is an alternate key if student_id is the primary key</li>
-      </ul>
+Super keys (all uniquely identify a student):
+  {student_id}
+  {email}
+  {student_id, name}         -- redundant but still unique
+  {student_id, email, phone} -- also redundant</div>
+      <p>Every candidate key is a super key. Not every super key is a candidate key.</p>
 
+      <h3>2. Candidate Key</h3>
       <p>
-        <strong>Foreign Key:</strong> An attribute that refers to the primary key of another table. Establishes relationships between tables.
+        A candidate key is a <em>minimal</em> super key — no attribute can be removed while still guaranteeing uniqueness.
+        A relation may have more than one candidate key.
       </p>
-      <ul>
-        <li>Creates referential integrity constraint</li>
-        <li>Can be NULL (in many-to-one relationships)</li>
-        <li><strong>Example:</strong> In an Enrollment table, student_id is a foreign key referencing Student table</li>
-      </ul>
+      <div class="code-block">Students(student_id, email, phone, name)
 
-      <p>
-        <strong>Composite Key:</strong> A primary key composed of two or more attributes.
-      </p>
-      <ul>
-        <li>Used when a single attribute cannot uniquely identify</li>
-        <li><strong>Example:</strong> In CourseEnrollment table, (student_id, course_id) together form the composite key</li>
-      </ul>
+Candidate keys (minimal unique identifiers):
+  {student_id}
+  {email}
 
-      <p>
-        <strong>Super Key:</strong> Any attribute or combination of attributes that can uniquely identify a tuple. Includes candidate and primary keys.
-      </p>
-      <ul>
-        <li>Not minimal (may contain unnecessary attributes)</li>
-        <li><strong>Example:</strong> (student_id, name, email) is a super key but not minimal</li>
-      </ul>
-
-      <h2>Key Selection Example</h2>
-      <p>
-        Consider a Customer table with attributes: customer_id, email, phone, SSN, name.
-      </p>
-      <div class="code-block">
-<pre>Candidate Keys: customer_id, email, SSN
-Primary Key:    customer_id (chosen)
-Alternate Keys: email, SSN
-Super Key:      (customer_id, email, phone, name)</pre>
+{student_id, email} is a super key but NOT a candidate key because
+removing either attribute still leaves a unique identifier.</div>
+      <div class="note-box">
+        A candidate key cannot contain a NULL value and must remain unique across all current and future tuples.
       </div>
 
-      <h2>Referential Integrity & Foreign Keys</h2>
+      <h3>3. Primary Key</h3>
       <p>
-        Foreign keys enforce referential integrity, ensuring that references to data in other tables are valid.
-      </p>
-      <p>
-        <strong>Rules:</strong>
+        The primary key is the candidate key chosen by the designer as the official row identifier.
       </p>
       <ul>
-        <li>A foreign key value must either exist in the referenced table or be NULL</li>
-        <li>Cannot reference a non-existent primary key</li>
-        <li>Prevents orphaned records (records with invalid references)</li>
+        <li><strong>Unique:</strong> no two rows share the same value.</li>
+        <li><strong>NOT NULL:</strong> every row must have a value.</li>
+        <li><strong>Stable:</strong> should rarely or never change after being set.</li>
+        <li><strong>Minimal:</strong> single-column where possible for join and index performance.</li>
       </ul>
+      <div class="code-block">CREATE TABLE Students (
+    student_id  INT          PRIMARY KEY,
+    email       VARCHAR(100) UNIQUE NOT NULL,     -- alternate key
+    name        VARCHAR(100) NOT NULL,
+    dob         DATE
+);</div>
+
+      <h3>4. Alternate Key</h3>
       <p>
-        <strong>Actions on foreign key violation:</strong>
+        Any candidate key not chosen as the primary key. Still unique and non-null; enforced via a UNIQUE constraint.
+        In the Students example above, <code>email</code> is an alternate key.
       </p>
+
+      <h3>5. Composite Key</h3>
+      <p>
+        A composite key is a primary (or candidate) key formed from two or more attributes.
+        No single attribute is sufficient for uniqueness; only the combination is unique and minimal.
+      </p>
+      <div class="code-block">-- A student can enroll in many courses; a course has many students.
+-- Each (student, course, semester) combination is unique.
+CREATE TABLE Enrollments (
+    student_id  INT     NOT NULL,
+    course_id   INT     NOT NULL,
+    semester    CHAR(6) NOT NULL,    -- e.g., 2026S1
+    grade       CHAR(2),
+    PRIMARY KEY (student_id, course_id, semester),
+    FOREIGN KEY (student_id) REFERENCES Students(student_id),
+    FOREIGN KEY (course_id)  REFERENCES Courses(course_id)
+);</div>
+
+      <h3>6. Foreign Key</h3>
+      <p>
+        A foreign key is an attribute (or set of attributes) in one relation that references the primary key (or unique key) of another relation.
+        It expresses a referential relationship and enforces <em>referential integrity</em>.
+      </p>
+      <div class="code-block">-- dept_id in Students is a foreign key referencing Departments
+Students (student_id [PK], name, email, dept_id [FK &rarr; Departments.dept_id])
+Departments (dept_id [PK], dept_name, hod)</div>
       <ul>
-        <li><strong>RESTRICT:</strong> Prevent the operation (delete parent will fail if children exist)</li>
-        <li><strong>CASCADE:</strong> Propagate the change (delete parent, children are also deleted)</li>
-        <li><strong>SET NULL:</strong> Set foreign key to NULL</li>
-        <li><strong>SET DEFAULT:</strong> Set foreign key to default value</li>
+        <li>A FK value must match an existing PK value in the referenced table, or be NULL.</li>
+        <li>A FK does not have to be unique — many students can belong to the same department.</li>
       </ul>
 
-      <h2>Practical Example: University Database</h2>
-      <div class="code-block">
-<pre>Students Table:
-- student_id (PRIMARY KEY)
-- email (UNIQUE, ALTERNATE KEY)
-- name
-- date_of_birth
+      <h3>7. Surrogate Key vs Natural Key</h3>
+      <table>
+        <tr><th></th><th>Natural Key</th><th>Surrogate Key</th></tr>
+        <tr><td>Meaning</td><td>Carries business meaning (email, SSN)</td><td>Artificially generated; no domain meaning</td></tr>
+        <tr><td>Stability</td><td>May change (email updated)</td><td>Never changes</td></tr>
+        <tr><td>Size</td><td>Often large strings</td><td>Compact INT or UUID</td></tr>
+        <tr><td>Join performance</td><td>Slower on large strings</td><td>Faster on integer comparisons</td></tr>
+        <tr><td>Example</td><td>passport_number, ISBN</td><td>AUTO_INCREMENT id, gen_random_uuid()</td></tr>
+      </table>
+      <p>Most tables use surrogate primary keys and enforce natural uniqueness with UNIQUE constraints on the relevant columns.</p>
 
-Courses Table:
-- course_id (PRIMARY KEY)
-- course_name
-- department_id (FOREIGN KEY → Department)
+      <h2>Integrity Constraints</h2>
 
-Enrollment Table:
-- student_id (COMPOSITE PRIMARY KEY, FOREIGN KEY → Students)
-- course_id (COMPOSITE PRIMARY KEY, FOREIGN KEY → Courses)
-- enrollment_date</pre>
-      </div>
+      <h3>Entity Integrity</h3>
+      <p>No attribute of a primary key may be NULL. A row without a primary key cannot be uniquely identified.</p>
 
-      <h2>Key Constraints</h2>
+      <h3>Referential Integrity</h3>
       <p>
-        <strong>Uniqueness Constraint:</strong> Ensures no two tuples have the same value for a key.
+        Every non-null foreign key value must match an existing primary key in the referenced table.
+        This prevents orphan records — rows that reference something that does not exist.
       </p>
+      <div class="code-block">-- Rejected if dept_id 99 does not exist in Departments
+INSERT INTO Students (student_id, name, dept_id) VALUES (201, 'Aisha', 99);
+-- ERROR: foreign key constraint violation</div>
+
+      <h3>Domain Constraint</h3>
+      <p>Every value must belong to the defined domain of its attribute.</p>
+      <div class="code-block">age   INT          CHECK (age &gt;= 0 AND age &lt;= 150),
+email VARCHAR(255) CHECK (email LIKE '%@%')</div>
+
+      <h3>NOT NULL Constraint</h3>
+      <p>Attributes that must always have values are declared NOT NULL. Unlike entity integrity (which applies only to PK attributes), NOT NULL can apply to any attribute.</p>
+
+      <h2>Referential Actions</h2>
+      <p>When a referenced row is deleted or updated, the DBMS decides what to do with dependent rows based on the declared action.</p>
+      <table>
+        <tr><th>Action</th><th>On DELETE parent</th><th>On UPDATE parent key</th></tr>
+        <tr><td>RESTRICT / NO ACTION</td><td>Operation fails if children exist</td><td>Operation fails if children exist</td></tr>
+        <tr><td>CASCADE</td><td>Child rows also deleted</td><td>Child FK updated to match new value</td></tr>
+        <tr><td>SET NULL</td><td>Child FK set to NULL</td><td>Child FK set to NULL</td></tr>
+        <tr><td>SET DEFAULT</td><td>Child FK set to its default value</td><td>Child FK set to its default value</td></tr>
+      </table>
+      <div class="code-block">CREATE TABLE Enrollments (
+    student_id INT,
+    course_id  INT,
+    FOREIGN KEY (student_id) REFERENCES Students(student_id)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY (course_id) REFERENCES Courses(course_id)
+        ON DELETE RESTRICT
+);</div>
+
+      <h2>Relational Algebra — The Formal Query Language</h2>
+      <p>Relational algebra defines operations on relations that return new relations. SQL is built on top of these operations.</p>
+
+      <h3>Selection (σ)</h3>
+      <p>Filters rows satisfying a condition. σ<sub>condition</sub>(R)</p>
+      <div class="code-block">σ age&gt;20 (Students)
+-- SQL: SELECT * FROM Students WHERE age &gt; 20;</div>
+
+      <h3>Projection (π)</h3>
+      <p>Returns only specified columns, removing duplicates. π<sub>attrs</sub>(R)</p>
+      <div class="code-block">π name, email (Students)
+-- SQL: SELECT DISTINCT name, email FROM Students;</div>
+
+      <h3>Cartesian Product (×)</h3>
+      <p>Pairs every row of A with every row of B. If A has m rows and B has n rows, result has m×n rows. The raw foundation of joins.</p>
+
+      <h3>Natural Join (⋈)</h3>
+      <p>Combines tuples from two relations that have equal values on all shared attributes, then removes duplicate columns.</p>
+      <div class="code-block">Students ⋈ Enrollments
+-- SQL: SELECT * FROM Students NATURAL JOIN Enrollments;</div>
+
+      <h3>Set Operations (∪, ∩, −)</h3>
+      <p>Require union-compatible schemas (same number of attributes, compatible domains).</p>
+      <div class="code-block">-- All names appearing in Students OR in Alumni
+π name(Students) ∪ π name(Alumni)
+
+-- Students enrolled in BOTH Maths AND Physics
+EnrolledMaths ∩ EnrolledPhysics</div>
+
+      <h3>Rename (ρ)</h3>
+      <p>Renames a relation or individual attributes. ρ<sub>NewName</sub>(R). Used to avoid ambiguity in self-joins.</p>
+
+      <h2>Introduction to Functional Dependency</h2>
       <p>
-        <strong>Not-Null Constraint:</strong> Primary keys must have values; they cannot be NULL.
+        A <strong>functional dependency</strong> X &rarr; Y means: knowing the value of X is enough to determine the value of Y.
+        If two tuples have the same X value, they must also have the same Y value.
       </p>
+      <div class="code-block">In Students(student_id, name, email, dept_id):
+  student_id &rarr; name         (id determines name)
+  student_id &rarr; email
+  student_id &rarr; dept_id
+  dept_id    &rarr; dept_name    (if dept_name were stored here)
+
+In Enrollments(student_id, course_id, semester, grade):
+  {student_id, course_id, semester} &rarr; grade   (PK &rarr; non-key attribute)</div>
       <p>
-        <strong>Domain Constraint:</strong> Attribute values must be within the defined domain (e.g., age ≥ 0).
+        Functional dependencies are the formal basis of normalization.
+        When non-key attributes depend on only <em>part</em> of the key (partial dependency) or on
+        <em>other non-key attributes</em> (transitive dependency), the table should be decomposed.
+        This is covered fully in the normalization article.
       </p>
 
-      <h2>Choosing a Primary Key</h2>
-      <p>
-        Guidelines for selecting a good primary key:
-      </p>
+      <h2>Complete University Schema</h2>
+      <div class="code-block">CREATE TABLE Departments (
+    dept_id   INT          PRIMARY KEY,
+    dept_name VARCHAR(100) UNIQUE NOT NULL
+);
+
+CREATE TABLE Students (
+    student_id INT          PRIMARY KEY,
+    name       VARCHAR(100) NOT NULL,
+    email      VARCHAR(255) UNIQUE NOT NULL,
+    dob        DATE,
+    dept_id    INT,
+    FOREIGN KEY (dept_id) REFERENCES Departments(dept_id)
+        ON DELETE SET NULL
+);
+
+CREATE TABLE Courses (
+    course_id   INT          PRIMARY KEY,
+    course_name VARCHAR(150) NOT NULL,
+    credits     INT          NOT NULL CHECK (credits BETWEEN 1 AND 6),
+    dept_id     INT,
+    FOREIGN KEY (dept_id) REFERENCES Departments(dept_id)
+);
+
+CREATE TABLE Enrollments (
+    student_id INT     NOT NULL,
+    course_id  INT     NOT NULL,
+    semester   CHAR(6) NOT NULL,
+    grade      CHAR(2),
+    PRIMARY KEY (student_id, course_id, semester),
+    FOREIGN KEY (student_id) REFERENCES Students(student_id) ON DELETE CASCADE,
+    FOREIGN KEY (course_id)  REFERENCES Courses(course_id)   ON DELETE CASCADE
+);</div>
+
+      <h2>Key Types Summary</h2>
+      <table>
+        <tr><th>Key Type</th><th>Minimal?</th><th>Unique?</th><th>NULL allowed?</th><th>Count per table</th></tr>
+        <tr><td>Super key</td><td>No</td><td>Yes</td><td>Depends</td><td>Many</td></tr>
+        <tr><td>Candidate key</td><td>Yes</td><td>Yes</td><td>No</td><td>One or more</td></tr>
+        <tr><td>Primary key</td><td>Yes</td><td>Yes</td><td>No</td><td>Exactly one</td></tr>
+        <tr><td>Alternate key</td><td>Yes</td><td>Yes</td><td>No</td><td>Zero or more</td></tr>
+        <tr><td>Foreign key</td><td>&mdash;</td><td>Not required</td><td>Usually yes</td><td>Zero or more</td></tr>
+        <tr><td>Composite key</td><td>Yes (as combination)</td><td>Yes (as combination)</td><td>No</td><td>Zero or more</td></tr>
+      </table>
+
+      <h2>What You Should Remember</h2>
       <ul>
-        <li><strong>Uniqueness:</strong> Must uniquely identify each record</li>
-        <li><strong>Minimal:</strong> Should not contain unnecessary attributes</li>
-        <li><strong>Immutable:</strong> Should not change over time (avoid using names or addresses)</li>
-        <li><strong>Simple:</strong> Preferably single attribute for performance</li>
-        <li><strong>Natural or Surrogate:</strong> Use surrogate keys (auto-increment) when natural keys are unreliable</li>
+        <li>Every candidate key is a super key; not every super key is a candidate key.</li>
+        <li>One candidate key is chosen as the primary key — unique, non-null, stable.</li>
+        <li>Foreign keys express inter-table relationships and enforce referential integrity.</li>
+        <li>Composite keys are used when no single attribute alone is unique.</li>
+        <li>Referential actions (CASCADE, SET NULL, RESTRICT) govern how the DBMS responds to changes in referenced rows.</li>
+        <li>Functional dependencies describe which attributes determine others — the formal foundation of normalization.</li>
       </ul>
 
-      <h2>Summary</h2>
-      <p>
-        Keys are fundamental to relational database design. They ensure data integrity, establish relationships between tables, and enable efficient retrieval. Understanding candidate keys, primary keys, foreign keys, and their roles is essential for designing robust databases.
-      </p>
-      <p>
-        In the next article, we'll explore normalization, a process that uses keys and functional dependencies to design efficient, redundancy-free databases.
-      </p>
+      <p>Next: Database Normalization — using functional dependencies to eliminate redundancy and anomalies.</p>
     </article>
   </main>
 
   <footer style="text-align: center; padding: 2rem; color: #666; border-top: 1px solid #eee; margin-top: 3rem;">
-    <p>&copy; 2024 Mudit Gupta. All rights reserved.</p>
+    <p>&copy; 2026 Mudit Gupta. All rights reserved.</p>
   </footer>
 </body>
 </html>

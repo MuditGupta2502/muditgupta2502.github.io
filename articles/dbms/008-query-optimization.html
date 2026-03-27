@@ -1,19 +1,24 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta http-equiv="X-UA-Compatible" content="IE=edge" />
   <title>Query Optimization | Mudit Gupta</title>
-  <meta name="description" content="Query optimization techniques, indexing strategies, and execution plans." />
+  <meta name="description" content="Deep dive into query optimization: query processing pipeline, rule-based vs cost-based optimization, execution plans, join algorithms, statistics, and common anti-patterns." />
   <link rel="stylesheet" href="/assets/css/articles.css" />
   <style>
     .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
     .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; color: #1a1a1a; }
+    .article-content h3 { margin-top: 1.5rem; margin-bottom: 0.75rem; color: #1a1a1a; }
     .article-content p { margin-bottom: 1rem; color: #333; }
     .article-content ul, .article-content ol { margin-left: 2rem; margin-bottom: 1rem; }
     .article-content li { margin-bottom: 0.5rem; }
-    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; white-space: pre; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    table th, table td { border: 1px solid #ddd; padding: 0.75rem; text-align: left; }
+    table th { background: #f0f0f0; font-weight: 600; }
+    .note-box { background: #fff8e1; border-left: 4px solid #f9a825; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
   </style>
 </head>
 <body>
@@ -29,225 +34,266 @@
   <main>
     <article class="article-content">
       <p class="kicker">DBMS Series | Part 008</p>
-      <h1>Query Optimization: Making Queries Fast & Efficient</h1>
-      <p class="meta">Performance & Optimization | 10 min read</p>
+      <h1>Query Optimization: From SQL String to Efficient Execution</h1>
+      <p class="meta">Performance &amp; Internals | 22 min read</p>
 
-      <h2>What is Query Optimization?</h2>
+      <h2>Why Query Optimization Matters</h2>
       <p>
-        Query optimization is the process of improving SQL query performance by minimizing resource consumption (CPU, memory, disk I/O) and execution time. The DBMS query optimizer automatically evaluates different execution plans and chooses the most efficient one.
+        The same SQL query can be answered in dozens of physically different ways.
+        A naive plan might scan millions of rows; an optimized plan might resolve the same result by reading a few hundred index entries.
+        On large tables the difference is not 10% faster — it can be the difference between a 0.5 ms response and a 30-second timeout.
       </p>
       <p>
-        <strong>Goal:</strong> Retrieve required data with minimum computational resources.
+        Understanding optimization does not require reading DBMS source code.
+        It requires understanding how the DBMS reasons about SQL, what execution plan choices exist,
+        and what signals it uses to choose between them.
       </p>
 
-      <h2>Query Processing Steps</h2>
+      <h2>The Query Processing Pipeline</h2>
       <ol>
-        <li><strong>Parsing:</strong> Check SQL syntax validity</li>
-        <li><strong>Translation:</strong> Convert SQL to internal representation</li>
-        <li><strong>Optimization:</strong> Generate optimal execution plan</li>
-        <li><strong>Compilation:</strong> Convert to executable code</li>
-        <li><strong>Execution:</strong> Execute the compiled plan</li>
+        <li><strong>Parsing:</strong> The SQL string is tokenized and validated against grammar rules. A parse tree is produced.</li>
+        <li><strong>Semantic analysis:</strong> Table names, column names, and types are resolved against the catalog. Errors like "no such column" are caught here.</li>
+        <li><strong>Translation to logical plan:</strong> The parse tree is converted to a relational algebra expression tree.</li>
+        <li><strong>Optimization:</strong> The logical plan is transformed into the lowest-cost physical execution plan by the query optimizer.</li>
+        <li><strong>Code generation / compilation:</strong> The physical plan is compiled into executable operators or bytecode.</li>
+        <li><strong>Execution:</strong> Operators are executed, data retrieved, and results returned to the client.</li>
       </ol>
 
-      <h2>Understanding Execution Plans</h2>
+      <h2>Logical vs Physical Plan</h2>
       <p>
-        An execution plan shows how the DBMS executes a query. It reveals the operations, join methods, and order of data access.
+        The <strong>logical plan</strong> describes what operations to perform (select, project, join) without specifying how.
+        The <strong>physical plan</strong> specifies the exact algorithm for each operation:
+        which index to use, which join algorithm to apply, and in what order to execute operations.
       </p>
+      <div class="code-block">SQL:
+  SELECT s.name FROM Students s JOIN Departments d ON s.dept_id = d.dept_id
+  WHERE d.dept_name = 'Computer Science';
+
+Logical plan:
+  Project[name]
+    &rarr; Join[s.dept_id = d.dept_id]
+        &rarr; Scan(Students)
+        &rarr; Select[dept_name = 'CS'](Scan(Departments))
+
+Physical plan option A (poor):
+  Hash Join
+    &rarr; SeqScan(Students)
+    &rarr; SeqScan(Departments) filtered dept_name='CS'
+
+Physical plan option B (better, with index):
+  Nested Loop
+    &rarr; IndexScan(Departments, dept_name = 'CS')   -- few rows
+    &rarr; IndexScan(Students, dept_id = matched_ids) -- use FK index</div>
+
+      <h2>Rule-Based Optimization (RBO)</h2>
       <p>
-        <strong>View Execution Plan:</strong>
+        Early optimizers used only fixed transformation rules:
       </p>
-      <div class="code-block">
-<pre>-- MySQL
-EXPLAIN SELECT * FROM Students WHERE age > 20;
-EXPLAIN FORMAT=JSON SELECT ...;
-
--- PostgreSQL
-EXPLAIN SELECT * FROM Students WHERE age > 20;
-EXPLAIN ANALYZE SELECT *;</pre>
-      </div>
-
-      <h2>Indexing Strategy</h2>
-      <p>
-        An index is a data structure that enables fast data retrieval, similar to a book's index. Without indexes, the DBMS performs full table scans.
-      </p>
-
-      <h3>Types of Indexes</h3>
-      <p>
-        <strong>Single-Column Index:</strong> Index on a single column.
-      </p>
-      <div class="code-block">
-<pre>CREATE INDEX idx_name ON Students(name);
-CREATE INDEX idx_email ON Students(email);</pre>
-      </div>
-
-      <p>
-        <strong>Composite (Multi-Column) Index:</strong> Index on multiple columns.
-      </p>
-      <div class="code-block">
-<pre>CREATE INDEX idx_dept_salary ON Employees(department_id, salary);</pre>
-      </div>
-
-      <p>
-        <strong>Unique Index:</strong> Enforces uniqueness.
-      </p>
-      <div class="code-block">
-<pre>CREATE UNIQUE INDEX idx_email ON Students(email);</pre>
-      </div>
-
-      <p>
-        <strong>Full-Text Index:</strong> For text search.
-      </p>
-      <div class="code-block">
-<pre>CREATE FULLTEXT INDEX idx_content ON Articles(content);</pre>
-      </div>
-
-      <h3>When to Create Indexes</h3>
       <ul>
-        <li><strong>WHERE Clause:</strong> Frequently filtered columns</li>
-        <li><strong>JOIN Conditions:</strong> Columns used in JOIN ON</li>
-        <li><strong>ORDER BY/GROUP BY:</strong> Sorted or grouped columns</li>
-        <li><strong>Foreign Keys:</strong> Improve JOIN performance</li>
+        <li>Push selections (WHERE clauses) as low as possible in the plan tree — reduces intermediate result size early.</li>
+        <li>Push projections down to eliminate unused columns early.</li>
+        <li>Reorder joins if one side is significantly smaller.</li>
+        <li>Replace subqueries with joins when equivalent.</li>
+        <li>Avoid Cartesian products when a join condition exists.</li>
       </ul>
+      <p>
+        RBO is deterministic — the same SQL always produces the same plan.
+        The limitation is that it ignores actual data statistics. A rule might say "always use the index,"
+        but on a highly duplicated column an index lookup may be slower than a full table scan.
+      </p>
 
-      <h3>When NOT to Index</h3>
+      <h2>Cost-Based Optimization (CBO)</h2>
+      <p>
+        Modern DBMS engines (PostgreSQL, MySQL 8+, SQL Server, Oracle) are primarily cost-based.
+        The optimizer assigns a numerical cost to each candidate plan using statistics stored in the system catalog,
+        then selects the minimum-cost plan.
+      </p>
+
+      <h3>Statistics the Optimizer Uses</h3>
       <ul>
-        <li>Small tables (less than 1000 rows)</li>
-        <li>Columns with low selectivity (few unique values)</li>
-        <li>Columns updated frequently (maintenance overhead)</li>
-        <li>Columns rarely used in WHERE/JOIN</li>
+        <li><strong>Table cardinality:</strong> Number of rows in the table.</li>
+        <li><strong>Column cardinality:</strong> Number of distinct values. High cardinality = more selective.</li>
+        <li><strong>Histograms:</strong> Distribution of values (are values evenly spread, or does one value appear 90% of the time?).</li>
+        <li><strong>Index type and depth:</strong> B-tree height, covering columns, selectivity.</li>
+        <li><strong>Average row size:</strong> Affects memory requirements for sort and hash operations.</li>
+        <li><strong>Correlation between columns:</strong> Rarely tracked, but important for multi-column predicates.</li>
       </ul>
+      <div class="code-block">-- Update statistics in PostgreSQL
+ANALYZE Students;
 
-      <h2>Query Optimization Techniques</h2>
-
-      <h3>1. Use Selective Columns</h3>
-      <p>
-        <strong>Avoid:</strong>
-      </p>
-      <div class="code-block">
-<pre>SELECT * FROM Students;</pre>
-      </div>
-      <p>
-        <strong>Prefer:</strong>
-      </p>
-      <div class="code-block">
-<pre>SELECT student_id, name, email FROM Students;</pre>
-      </div>
-
-      <h3>2. Add WHERE Clause Conditions</h3>
-      <p>
-        Reduce rows early to minimize processing.
-      </p>
-      <div class="code-block">
-<pre>-- Better: Filters early
-SELECT * FROM Students 
-WHERE department_id = 5 AND age > 20;
-
--- Worse: No filtering
-SELECT * FROM Students</pre>
-      </div>
-
-      <h3>3. Use INNER JOIN Instead of Outer Joins</h3>
-      <p>
-        INNER joins are faster because they process fewer rows.
-      </p>
-      <div class="code-block">
-<pre>-- Prefer INNER when you need matching rows only
-SELECT s.name, c.course_name
-FROM Students s
-INNER JOIN Enrollments e ON s.student_id = e.student_id
-INNER JOIN Courses c ON e.course_id = c.course_id;</pre>
-      </div>
-
-      <h3>4. Avoid Functions in WHERE Clause</h3>
-      <p>
-        <strong>Avoid:</strong> Functions prevent using indexes.
-      </p>
-      <div class="code-block">
-<pre>SELECT * FROM Students 
-WHERE UPPER(name) = 'JOHN'; -- Can't use index</pre>
-      </div>
-      <p>
-        <strong>Prefer:</strong>
-      </p>
-      <div class="code-block">
-<pre>SELECT * FROM Students 
-WHERE name = 'John'; -- Can use index</pre>
-      </div>
-
-      <h3>5. Use EXISTS Instead of IN for Subqueries</h3>
-      <p>
-        <strong>Better Performance:</strong>
-      </p>
-      <div class="code-block">
-<pre>SELECT * FROM Students s
-WHERE EXISTS (
-  SELECT 1 FROM Enrollments 
-  WHERE student_id = s.student_id
-);</pre>
-      </div>
-
-      <h3>6. Parameterize Queries</h3>
-      <p>
-        Use prepared statements to prevent SQL injection and enable query caching.
-      </p>
-      <div class="code-block">
-<pre>-- Prepared statement (pseudo-code)
-PREPARE stmt FROM 'SELECT * FROM Students WHERE student_id = ?'
-EXECUTE stmt USING 5;</pre>
-      </div>
-
-      <h3>7. Limit Result Set</h3>
-      <div class="code-block">
-<pre>SELECT * FROM Students LIMIT 10;</pre>
-      </div>
-
-      <h3>8. Use Denormalization for Read-Heavy Queries</h3>
-      <p>
-        Intentionally store redundant data for frequently accessed aggregates.
-      </p>
-      <div class="code-block">
-<pre>-- Add order_total to Orders table even though it can be calculated
-ALTER TABLE Orders ADD order_total DECIMAL(10,2);</pre>
-      </div>
-
-      <h2>Batch Operations</h2>
-      <p>
-        Insert/update multiple rows at once instead of individual statements.
-      </p>
-      <div class="code-block">
-<pre>-- Better: Batch insert
-INSERT INTO Students (name, email) VALUES
-('John', 'john@ex.com'),
-('Jane', 'jane@ex.com'),
-('Bob', 'bob@ex.com');
-
--- Avoid: Individual inserts in a loop</pre>
-      </div>
-
-      <h2>Database Statistics</h2>
-      <p>
-        Database maintainers should regularly update statistics so the optimizer makes good decisions.
-      </p>
-      <div class="code-block">
-<pre>-- MySQL
+-- Update statistics in MySQL
 ANALYZE TABLE Students;
 
--- PostgreSQL
-ANALYZE;</pre>
+-- SQL Server
+UPDATE STATISTICS Students;</div>
+
+      <div class="note-box">
+        Stale statistics are one of the most common causes of bad query plans.
+        Re-analyze tables after bulk loads or significant data changes.
       </div>
 
-      <h2>Summary</h2>
+      <h2>Execution Plan Access Methods</h2>
+
+      <h3>Sequential Scan (Full Table Scan)</h3>
+      <p>Reads every block of the table in order. Cost is proportional to table size. Best when retrieving a large fraction of rows or when no useful index exists.</p>
+
+      <h3>Index Scan</h3>
+      <p>Traverses a B-tree index to find qualifying rows, then fetches the actual row from the heap. Efficient when selecting a small fraction of rows (high-selectivity predicate).</p>
+
+      <h3>Index-Only Scan</h3>
+      <p>When all required columns are contained in the index itself, the heap access step is skipped entirely. This is called a "covering index" scenario and is very fast.</p>
+      <div class="code-block">-- Covering index: query only touches index, never heap
+CREATE INDEX idx_students_dept_gpa ON Students(dept_id, gpa);
+
+SELECT dept_id, gpa FROM Students WHERE dept_id = 3;
+-- Both dept_id and gpa are in the index. Index-only scan possible.</div>
+
+      <h3>Bitmap Index Scan</h3>
+      <p>Used when OR combines two index conditions. Builds bitmaps from two separate indexes, ORs them together, then fetches matching rows in heap order.</p>
+
+      <h2>Join Algorithms</h2>
+
+      <h3>Nested Loop Join</h3>
+      <p>For every row in the outer table, scan the inner table. Cost: O(|outer| &times; |inner|). Fast when the inner table is small or has a supporting index.</p>
+      <div class="code-block">-- Effective when inner side is small or accessed via index
+For each row r in Students:       -- outer
+  For each row t in Enrollments   -- inner
+    where t.student_id = r.student_id:
+      output (r, t)</div>
+
+      <h3>Hash Join</h3>
       <p>
-        Query optimization is a critical skill for database performance. By understanding execution plans, using appropriate indexes, writing selective queries, and avoiding common pitfalls, you can dramatically improve application responsiveness. Regular monitoring and tuning ensure databases remain performant as data grows.
+        Builds a hash table from the smaller relation (build phase), then probes it with each row from the larger relation (probe phase).
+        Cost: O(|build| + |probe|). Excellent for large tables without supporting index.
+        Requires memory to hold the hash table; spills to disk if memory is exhausted.
       </p>
+
+      <h3>Sort-Merge Join</h3>
       <p>
-        In the next article, we'll explore Views and Indexes in more detail, and how they improve both performance and maintainability.
+        Both relations are sorted on the join key, then merged in a single pass.
+        Cost: O(|R| log|R| + |S| log|S| + |R| + |S|).
+        Particularly efficient when both sides are already sorted (e.g., already using a B-tree index on the join column).
+        Good for inequality joins (<, >, BETWEEN) where hash join cannot be used.
       </p>
+      <table>
+        <tr><th>Algorithm</th><th>Best for</th><th>Memory</th><th>Handles inequality join?</th></tr>
+        <tr><td>Nested Loop</td><td>Small inner relation or indexed inner</td><td>Low</td><td>Yes</td></tr>
+        <tr><td>Hash Join</td><td>Large unsorted equi-joins</td><td>High (build phase)</td><td>No (equi-join only)</td></tr>
+        <tr><td>Sort-Merge</td><td>Pre-sorted data or inequality joins</td><td>Moderate</td><td>Yes</td></tr>
+      </table>
+
+      <h2>Reading Execution Plans</h2>
+      <p>Most DBMS provide an EXPLAIN command that shows the chosen execution plan without executing the query.</p>
+      <div class="code-block">-- PostgreSQL
+EXPLAIN SELECT s.name
+FROM Students s JOIN Departments d ON s.dept_id = d.dept_id
+WHERE d.dept_name = 'Computer Science';
+
+-- Sample output:
+Nested Loop  (cost=0.28..19.41 rows=5 width=50)
+  -&gt;  Index Scan using departments_name_idx on departments d
+        Index Cond: ((dept_name)::text = 'Computer Science'::text)
+  -&gt;  Index Scan using students_dept_idx on students s
+        Index Cond: (dept_id = d.dept_id)
+
+-- EXPLAIN ANALYZE actually runs the query and shows real timing
+EXPLAIN ANALYZE SELECT ...;</div>
+      <p>Key fields to read:</p>
+      <ul>
+        <li><code>cost=startup..total</code> — Estimated cost units (not milliseconds). Lower is better.</li>
+        <li><code>rows</code> — Estimated number of rows returned by this node.</li>
+        <li><code>actual time</code> (ANALYZE only) — Real execution time in milliseconds.</li>
+        <li><code>loops</code> (ANALYZE only) — How many times this node was executed.</li>
+        <li>Scan type — SeqScan means no index used; IndexScan means an index was used.</li>
+      </ul>
+
+      <h2>When Does the Optimizer NOT Use an Index?</h2>
+      <ul>
+        <li><strong>Low selectivity:</strong> Column has very few distinct values (e.g., a boolean column). Scanning the whole table is faster than random-access index reads.</li>
+        <li><strong>Function on the indexed column:</strong> <code>WHERE LOWER(name) = 'mudit'</code> prevents index use on <code>name</code>. Fix: create a functional index.</li>
+        <li><strong>Leading wildcard LIKE:</strong> <code>WHERE name LIKE '%udit'</code> cannot use a B-tree prefix scan. Fix: use full-text search.</li>
+        <li><strong>Implicit type cast:</strong> <code>WHERE student_id = '101'</code> (string vs int comparison) may prevent index use.</li>
+        <li><strong>OR conditions:</strong> <code>WHERE dept_id = 1 OR dept_id = 2</code> may lead to separate index scans + bitmap merge, or a full scan. Use <code>IN (1, 2)</code>.</li>
+        <li><strong>Negation:</strong> <code>WHERE dept_id != 3</code> has low selectivity in most cases. Index rarely helps.</li>
+      </ul>
+
+      <h2>Query Rewriting Techniques</h2>
+
+      <h3>Subquery to JOIN</h3>
+      <div class="code-block">-- Subquery version (may execute once per outer row)
+SELECT name FROM Students
+WHERE dept_id IN (SELECT dept_id FROM Departments WHERE dept_name = 'CS');
+
+-- JOIN version (usually more efficient; optimizer can choose join algorithm)
+SELECT s.name
+FROM Students s
+JOIN Departments d ON s.dept_id = d.dept_id
+WHERE d.dept_name = 'CS';</div>
+
+      <h3>EXISTS over COUNT</h3>
+      <div class="code-block">-- Slow: scans entire match set
+SELECT name FROM Students s
+WHERE (SELECT COUNT(*) FROM Enrollments e WHERE e.student_id = s.student_id) &gt; 0;
+
+-- Fast: stops at first match
+SELECT name FROM Students s
+WHERE EXISTS (SELECT 1 FROM Enrollments e WHERE e.student_id = s.student_id);</div>
+
+      <h3>Avoid SELECT *</h3>
+      <div class="code-block">-- Fetches all columns, including those never used. Defeats index-only scans.
+SELECT * FROM Students WHERE dept_id = 3;
+
+-- Better: fetch only what you need
+SELECT student_id, name FROM Students WHERE dept_id = 3;</div>
+
+      <h3>Avoid Functions on Indexed Columns in WHERE</h3>
+      <div class="code-block">-- Prevents index use on 'name'
+SELECT * FROM Students WHERE YEAR(dob) = 2002;
+
+-- Better: range predicate the index can satisfy
+SELECT * FROM Students WHERE dob BETWEEN '2002-01-01' AND '2002-12-31';</div>
+
+      <h2>Relational Algebra Equivalences Used by Optimizer</h2>
+      <ul>
+        <li><strong>Selection cascading:</strong> σ<sub>c1 AND c2</sub>(R) = σ<sub>c1</sub>(σ<sub>c2</sub>(R))</li>
+        <li><strong>Selection commutativity:</strong> σ<sub>c1</sub>(σ<sub>c2</sub>(R)) = σ<sub>c2</sub>(σ<sub>c1</sub>(R))</li>
+        <li><strong>Projection cascading:</strong> π<sub>L1</sub>(π<sub>L2</sub>(R)) = π<sub>L1</sub>(R) when L1 &sube; L2</li>
+        <li><strong>Pushing selection below join:</strong> σ<sub>c</sub>(R ⋈ S) = σ<sub>c</sub>(R) ⋈ S where c only references R's attributes</li>
+        <li><strong>Join commutativity:</strong> R ⋈ S = S ⋈ R</li>
+        <li><strong>Join associativity:</strong> (R ⋈ S) ⋈ T = R ⋈ (S ⋈ T)</li>
+      </ul>
+
+      <h2>Practical Optimization Checklist</h2>
+      <ol>
+        <li>Run EXPLAIN (ANALYZE) first. Understand the current plan before changing anything.</li>
+        <li>Identify the most expensive node in the plan tree (highest Cost or Actual Time).</li>
+        <li>Check if a useful index exists on filtering and joining columns.</li>
+        <li>Ensure statistics are up to date with ANALYZE.</li>
+        <li>Remove functions from indexed columns in WHERE. Rewrite as range conditions.</li>
+        <li>Replace correlated subqueries with JOINs where possible.</li>
+        <li>Limit result sets early with WHERE conditions, not late with outer filtering.</li>
+        <li>Use covering indexes for hot read paths.</li>
+        <li>Avoid SELECT * — name exactly the columns needed.</li>
+        <li>Watch query frequency: a moderately slow query executed 10,000 times/sec matters more than a slow one executed once/day.</li>
+      </ol>
+
+      <h2>What You Should Remember</h2>
+      <ul>
+        <li>SQL is declarative — the optimizer decides the physical execution strategy.</li>
+        <li>Cost-based optimization uses statistics (cardinality, histograms, index depth) to estimate and minimize plan cost.</li>
+        <li>The three main join algorithms are Nested Loop (good for small/indexed inner), Hash Join (good for big unsorted equi-joins), and Sort-Merge (good for sorted or inequality joins).</li>
+        <li>EXPLAIN shows the chosen plan. EXPLAIN ANALYZE runs it and shows actual timings — use this to validate optimizer assumptions.</li>
+        <li>Indexes are not always used: low selectivity, functions on columns, leading wildcards, and implicit casts all prevent index use.</li>
+        <li>Rewrite subqueries as JOINs where semantically equivalent; use EXISTS instead of COUNT for existence checks.</li>
+        <li>Stale statistics cause bad plans. Analyze after bulk operations.</li>
+      </ul>
+
+      <p>Next: Views and Indexing — how to structure read-access abstraction and build the right indexes.</p>
     </article>
   </main>
 
   <footer style="text-align: center; padding: 2rem; color: #666; border-top: 1px solid #eee; margin-top: 3rem;">
-    <p>&copy; 2024 Mudit Gupta. All rights reserved.</p>
+    <p>&copy; 2026 Mudit Gupta. All rights reserved.</p>
   </footer>
 </body>
 </html>

@@ -1,19 +1,26 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta http-equiv="X-UA-Compatible" content="IE=edge" />
   <title>Database Normalization | Mudit Gupta</title>
-  <meta name="description" content="Understanding database normalization, normal forms (1NF, 2NF, 3NF, BCNF), and functional dependencies." />
+  <meta name="description" content="Complete guide to database normalization: functional dependencies, Armstrong axioms, 1NF through BCNF, 4NF, anomalies, and worked examples." />
   <link rel="stylesheet" href="/assets/css/articles.css" />
   <style>
     .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
     .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; color: #1a1a1a; }
+    .article-content h3 { margin-top: 1.5rem; margin-bottom: 0.75rem; color: #1a1a1a; }
     .article-content p { margin-bottom: 1rem; color: #333; }
     .article-content ul, .article-content ol { margin-left: 2rem; margin-bottom: 1rem; }
     .article-content li { margin-bottom: 0.5rem; }
-    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; white-space: pre; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    table th, table td { border: 1px solid #ddd; padding: 0.75rem; text-align: left; }
+    table th { background: #f0f0f0; font-weight: 600; }
+    .note-box { background: #fff8e1; border-left: 4px solid #f9a825; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .bad-table { background: #fff5f5; border: 1px solid #ffcdd2; }
+    .good-table { background: #f1f8e9; border: 1px solid #c5e1a5; }
   </style>
 </head>
 <body>
@@ -29,181 +36,324 @@
   <main>
     <article class="article-content">
       <p class="kicker">DBMS Series | Part 005</p>
-      <h1>Database Normalization: Eliminating Redundancy & Anomalies</h1>
-      <p class="meta">Database Design | 12 min read</p>
+      <h1>Database Normalization: From Anomalies to Clean Design</h1>
+      <p class="meta">Database Design | 25 min read</p>
 
-      <h2>What is Normalization?</h2>
+      <h2>Why Normalization Exists</h2>
       <p>
-        Database normalization is a systematic process of organizing data in a database to eliminate redundancy and improve data integrity. It involves breaking down larger tables into smaller, related tables and defining relationships between them.
+        The naive approach to storing data is to cram as many attributes as possible into a single table.
+        This feels convenient at first, but once data volume grows and updates begin, the structural flaws become painful.
+        Normalization is the formal process of decomposing tables to eliminate redundancy and the update anomalies it causes.
       </p>
       <p>
-        <strong>Goals of Normalization:</strong>
+        Consider a table called <code>StudentCourse</code> that tries to store everything:
       </p>
+      <div class="code-block">StudentCourse (un-normalized):
+student_id | student_name | dept_id | dept_name   | course_id | course_name | instructor | grade
+-----------|--------------|---------|-------------|-----------|-------------|------------|------
+101        | Mudit        | D01     | Computer Sci| C001      | DBMS        | Prof. Shah | A
+101        | Mudit        | D01     | Computer Sci| C002      | OS          | Prof. Rao  | B
+102        | Aisha        | D02     | Mathematics | C003      | Calculus    | Prof. Iyer | A+
+102        | Aisha        | D02     | Mathematics | C001      | DBMS        | Prof. Shah | B+</div>
+
+      <h2>The Three Anomalies</h2>
+
+      <h3>Insertion Anomaly</h3>
+      <p>
+        You cannot insert a new department until at least one student is enrolled.
+        If the Electrical Engineering department exists but has no enrolled students yet,
+        there is no row to put it in.
+      </p>
+
+      <h3>Update Anomaly</h3>
+      <p>
+        If Computer Science changes its name to "Computing &amp; AI", every row for a CS student in every course must be updated.
+        Miss one, and the data becomes inconsistent — some rows say "Computer Sci", others say "Computing &amp; AI".
+      </p>
+
+      <h3>Deletion Anomaly</h3>
+      <p>
+        If student 102 drops all courses, and her row is deleted, we also lose the fact that the Mathematics department exists and that Prof. Iyer teaches Calculus.
+      </p>
+
+      <h2>Functional Dependency (FD)</h2>
+      <p>
+        Functional dependencies are the mathematical tool used to reason about normalization.
+        X &rarr; Y (read as "X determines Y") means: if two tuples have the same value for X,
+        they must have the same value for Y. X is called the <em>determinant</em>; Y is the <em>dependent</em>.
+      </p>
+      <div class="code-block">In StudentCourse:
+  student_id &rarr; student_name          (knowing id determines name)
+  student_id &rarr; dept_id
+  dept_id    &rarr; dept_name             (transitive: id &rarr; dept_id &rarr; dept_name)
+  course_id  &rarr; course_name
+  course_id  &rarr; instructor
+  {student_id, course_id} &rarr; grade    (grade depends on both)</div>
+
+      <h3>Types of Functional Dependencies</h3>
       <ul>
-        <li>Eliminate data redundancy (same data stored multiple times)</li>
-        <li>Prevent insertion, update, and deletion anomalies</li>
-        <li>Ensure data consistency and integrity</li>
-        <li>Simplify data maintenance</li>
+        <li><strong>Trivial FD:</strong> Y is a subset of X. (e.g., {A, B} &rarr; A is always true.)</li>
+        <li><strong>Non-trivial FD:</strong> Y is not a subset of X. These are the meaningful ones.</li>
+        <li><strong>Partial dependency:</strong> A non-key attribute depends on only <em>part</em> of a composite key.</li>
+        <li><strong>Transitive dependency:</strong> A non-key attribute depends on another non-key attribute.</li>
+        <li><strong>Multivalued dependency:</strong> An attribute independently determines a set of values for another attribute (relevant to 4NF).</li>
       </ul>
 
-      <h2>Problems Without Normalization</h2>
-      <p>
-        <strong>Insertion Anomaly:</strong> Difficulty inserting new data due to missing related data. Example: Cannot add a new course until a student enrolls in it.
-      </p>
-      <p>
-        <strong>Update Anomaly:</strong> Data inconsistency when updating redundant information. If a student's email is stored in multiple places and you update one, others become incorrect.
-      </p>
-      <p>
-        <strong>Deletion Anomaly:</strong> Unintended data loss when deleting records. Example: Deleting the last student enrolled in a course also deletes course information.
-      </p>
-      <p>
-        <strong>Data Redundancy:</strong> Same data repeated unnecessarily, wasting storage and creating consistency issues.
-      </p>
+      <h2>Armstrong's Axioms</h2>
+      <p>Armstrong's axioms provide a complete and sound set of inference rules for deriving all valid functional dependencies from a given set.</p>
+      <h3>Primary Rules</h3>
+      <ul>
+        <li><strong>Reflexivity:</strong> If Y &sube; X, then X &rarr; Y. (Trivial FD.)</li>
+        <li><strong>Augmentation:</strong> If X &rarr; Y, then XZ &rarr; YZ. (Adding attributes does not break the dependency.)</li>
+        <li><strong>Transitivity:</strong> If X &rarr; Y and Y &rarr; Z, then X &rarr; Z.</li>
+      </ul>
+      <h3>Derived Rules (can be proved from above)</h3>
+      <ul>
+        <li><strong>Union:</strong> If X &rarr; Y and X &rarr; Z, then X &rarr; YZ.</li>
+        <li><strong>Decomposition:</strong> If X &rarr; YZ, then X &rarr; Y and X &rarr; Z.</li>
+        <li><strong>Pseudotransitivity:</strong> If X &rarr; Y and WY &rarr; Z, then WX &rarr; Z.</li>
+      </ul>
 
-      <h2>Functional Dependency</h2>
+      <h2>Closure of Attributes</h2>
       <p>
-        A functional dependency (FD) is a relationship between attributes. If attribute B depends on attribute A, then for each value of A, there is exactly one value of B.
+        The closure of attribute set X under a set F of FDs, written X<sup>+</sup>, is the set of all attributes that can be determined from X using F.
+        Closure is used to identify candidate keys and derive implied FDs.
       </p>
-      <p>
-        Notation: A → B (read as "A determines B")
-      </p>
-      <p>
-        <strong>Example:</strong> In a Student table:
-      </p>
-      <div class="code-block">
-<pre>student_id → name (one student_id has exactly one name)
-student_id → email (one student_id has exactly one email)
-email → student_id (one email belongs to exactly one student, assuming unique emails)</pre>
-      </div>
+      <div class="code-block">FDs: A &rarr; B, B &rarr; C, A &rarr; D
 
-      <h2>Keys and Functional Dependency</h2>
+Find A+:
+  Start with {A}
+  Apply A &rarr; B  &rarr; {A, B}
+  Apply B &rarr; C  &rarr; {A, B, C}
+  Apply A &rarr; D  &rarr; {A, B, C, D}
+
+A+ = {A, B, C, D}      -- A is a candidate key if schema has only these 4 attrs</div>
+
+      <h2>Minimal Cover (Canonical Cover)</h2>
       <p>
-        <strong>Prime Attribute:</strong> An attribute that is part of a candidate key.
+        A minimal cover of a set F of FDs is an equivalent set F<sub>c</sub> where:
       </p>
-      <p>
-        <strong>Non-Prime Attribute:</strong> An attribute that is not part of any candidate key.
-      </p>
-      <p>
-        Functional dependencies are the basis for determining normal forms. If non-prime attributes are dependent only on the primary key (not on other attributes), the table is properly normalized.
-      </p>
+      <ol>
+        <li>Every FD in F<sub>c</sub> has a single attribute on the right-hand side.</li>
+        <li>No FD in F<sub>c</sub> is redundant (removing it changes the closure).</li>
+        <li>No attribute on the left-hand side of any FD is extraneous.</li>
+      </ol>
+      <p>Minimal cover is important for producing the most compact normalized schema.</p>
 
       <h2>Normal Forms</h2>
 
       <h3>First Normal Form (1NF)</h3>
       <p>
-        <strong>Rule:</strong> All attributes must contain atomic (indivisible) values. No repeating groups.
+        A relation is in 1NF if and only if:
       </p>
-      <p>
-        <strong>Violation Example:</strong> A Student table with a "phone_numbers" column containing multiple comma-separated values.
-      </p>
-      <p>
-        <strong>How to fix:</strong> Separate multi-valued attributes into a new table with a foreign key relationship.
-      </p>
-      <div class="code-block">
-<pre>BEFORE (Not 1NF):
-Students: student_id, name, phone_numbers ("123,456,789")
-
-AFTER (1NF):
-Students: student_id, name
-Phones: student_id, phone_number</pre>
-      </div>
+      <ul>
+        <li>Every attribute contains only atomic (indivisible) values.</li>
+        <li>No column stores sets, arrays, or repeated groups.</li>
+        <li>Rows are uniquely identifiable.</li>
+      </ul>
+      <p><strong>Violation example:</strong></p>
+      <div class="code-block">Student(student_id, name, phone_numbers)
+Row: 101, Mudit, "9876543210, 9123456789"   -- NOT 1NF (multi-valued cell)</div>
+      <p><strong>Fix (1NF):</strong></p>
+      <div class="code-block">StudentPhones(student_id, phone)
+(101, 9876543210)
+(101, 9123456789)</div>
 
       <h3>Second Normal Form (2NF)</h3>
       <p>
-        <strong>Requirements:</strong> Must be in 1NF, and all non-prime attributes must be fully functionally dependent on the primary key (not just part of it).
+        A relation is in 2NF if it is in 1NF <em>and</em> every non-key attribute is <em>fully functionally dependent</em> on the entire primary key.
+        Partial dependencies must be eliminated.
+        2NF is only relevant when the primary key is composite.
       </p>
-      <p>
-        Addresses partial dependency — where a non-prime attribute depends on only a part of a composite primary key.
-      </p>
-      <p>
-        <strong>Violation Example:</strong>
-      </p>
-      <div class="code-block">
-<pre>StudentCourse (student_id, course_id, professor_name, professor_office)
-Primary Key: (student_id, course_id)
+      <p><strong>Violation example:</strong></p>
+      <div class="code-block">Enrollment(student_id, course_id, student_name, course_name, grade)
+PK = {student_id, course_id}
 
-Issue: professor_name depends only on course_id, not on the full key</pre>
-      </div>
-      <p>
-        <strong>How to fix:</strong> Separate into two tables:
-      </p>
-      <div class="code-block">
-<pre>StudentCourse: (student_id, course_id)
-Course: (course_id, professor_name, professor_office)</pre>
-      </div>
+Partial dependencies (violate 2NF):
+  student_id &rarr; student_name   (depends on only part of PK)
+  course_id  &rarr; course_name    (depends on only part of PK)
+
+Full dependency (correct for 2NF):
+  {student_id, course_id} &rarr; grade</div>
+      <p><strong>Fix (decompose into 2NF):</strong></p>
+      <div class="code-block">Students(student_id [PK], student_name)
+Courses(course_id [PK], course_name)
+Enrollment(student_id [PK, FK], course_id [PK, FK], grade)</div>
 
       <h3>Third Normal Form (3NF)</h3>
       <p>
-        <strong>Requirements:</strong> Must be in 2NF, and no non-prime attribute should depend on another non-prime attribute.
+        A relation is in 3NF if it is in 2NF <em>and</em> there are no transitive dependencies of non-key attributes on the primary key.
+        Formally: for every non-trivial FD X &rarr; Y, either X is a super key or Y is part of a candidate key.
       </p>
-      <p>
-        Addresses transitive dependency — where a non-prime attribute depends indirectly on the primary key through another non-prime attribute.
-      </p>
-      <p>
-        <strong>Violation Example:</strong>
-      </p>
-      <div class="code-block">
-<pre>Employee (emp_id, emp_name, dept_id, dept_name, dept_location)
-Primary Key: emp_id
+      <p><strong>Violation example:</strong></p>
+      <div class="code-block">Student(student_id [PK], name, dept_id, dept_name)
 
-Issue: dept_name and dept_location depend on dept_id, not directly on emp_id
-(emp_id → dept_id → dept_name)</pre>
-      </div>
-      <p>
-        <strong>How to fix:</strong>
-      </p>
-      <div class="code-block">
-<pre>Employee: (emp_id, emp_name, dept_id)
-Department: (dept_id, dept_name, dept_location)</pre>
-      </div>
+Transitive dependency:
+  student_id &rarr; dept_id &rarr; dept_name
+  dept_name depends on dept_id, not directly on student_id</div>
+      <p><strong>Fix (decompose into 3NF):</strong></p>
+      <div class="code-block">Students(student_id [PK], name, dept_id [FK])
+Departments(dept_id [PK], dept_name)</div>
 
       <h3>Boyce-Codd Normal Form (BCNF)</h3>
       <p>
-        <strong>Requirements:</strong> 3NF with stricter conditions. Every determinant must be a candidate key.
+        BCNF is a stricter version of 3NF. A relation is in BCNF if and only if for every non-trivial FD X &rarr; Y, X is a super key.
+        BCNF eliminates all redundancy detectable by functional dependencies.
       </p>
+      <div class="note-box">
+        Key difference: 3NF allows Y to be part of a candidate key even if X is not a super key.
+        BCNF does not allow this exception. Every 3NF relation is not necessarily in BCNF.
+      </div>
+      <p><strong>Classic BCNF violation example:</strong></p>
+      <div class="code-block">CourseTeacher(student_id, subject, teacher)
+Assumption: each teacher teaches only one subject; each student can have one teacher per subject.
+
+Candidate keys: {student_id, subject}, {student_id, teacher}
+FD: teacher &rarr; subject   (teacher determines subject)
+
+teacher &rarr; subject violates BCNF because 'teacher' is NOT a super key,
+yet the dependency is non-trivial.</div>
+      <p><strong>Fix (decompose into BCNF):</strong></p>
+      <div class="code-block">TeacherSubject(teacher [PK], subject)
+StudentTeacher(student_id [PK, FK], teacher [PK, FK])</div>
       <p>
-        BCNF handles edge cases where 3NF doesn't fully eliminate anomalies in tables with overlapping candidate keys.
-      </p>
-      <p>
-        <strong>Note:</strong> Most practical applications achieve 3NF, which provides good balance between normalization and query performance.
+        Note: Decomposition into BCNF sometimes loses the ability to check a functional dependency without performing a join.
+        This is the tradeoff: BCNF guarantees zero FD-based redundancy, but may not be dependency-preserving.
+        3NF always has a dependency-preserving lossless decomposition.
       </p>
 
-      <h2>Denormalization: The Trade-off</h2>
+      <h3>Fourth Normal Form (4NF)</h3>
       <p>
-        While normalization reduces redundancy, excessive normalization can impact query performance due to multiple joins.
+        4NF addresses <em>multivalued dependencies</em>.
+        A multivalued dependency X &twoheadrightarrow; Y exists when for a given X value, there is a set of Y values
+        that is independent of all other attributes. A relation is in 4NF if it is in BCNF and has no non-trivial multivalued dependencies.
+      </p>
+      <div class="code-block">Employee(emp_id, skill, dependent_name)
+
+emp_id &twoheadrightarrow; skill           (employee has many skills)
+emp_id &twoheadrightarrow; dependent_name  (employee has many dependents)
+
+These are independent — skills have nothing to do with dependents.
+Storing them in one table creates spurious rows.
+
+Fix:
+  EmployeeSkills(emp_id, skill)
+  EmployeeDependents(emp_id, dependent_name)</div>
+
+      <h2>Testing for Normal Form Violations</h2>
+      <p>A practical checklist:</p>
+      <ol>
+        <li>List all FDs for the relation.</li>
+        <li>Identify all candidate keys using attribute closure.</li>
+        <li>Check 1NF: are all attribute values atomic?</li>
+        <li>Check 2NF: does every non-key attribute depend on the whole PK (not just part of it)?</li>
+        <li>Check 3NF: for every FD X &rarr; Y, is X a super key OR is Y part of a candidate key?</li>
+        <li>Check BCNF: for every non-trivial FD X &rarr; Y, is X a super key?</li>
+      </ol>
+
+      <h2>Lossless Decomposition</h2>
+      <p>
+        When splitting a table into two, the decomposition is <em>lossless</em> if joining the resulting tables back always reproduces the original relation exactly — no spurious rows added.
       </p>
       <p>
-        <strong>Denormalization</strong> is intentionally introducing redundancy for performance optimization. Used when:
+        A decomposition of R into R1 and R2 is lossless if either:
       </p>
       <ul>
-        <li>Read performance is critical and write performance is less important</li>
-        <li>Complex joins on large tables create performance bottlenecks</li>
-        <li>Aggregate data needs to be frequently accessed</li>
+        <li>(R1 &cap; R2) &rarr; R1 attributes (the common attributes form a key of R1), or</li>
+        <li>(R1 &cap; R2) &rarr; R2 attributes (the common attributes form a key of R2).</li>
+      </ul>
+      <div class="code-block">Original: Employee(emp_id, dept_id, dept_name)
+FD: dept_id &rarr; dept_name
+
+Decompose to:
+  E1(emp_id, dept_id)
+  E2(dept_id, dept_name)
+
+E1 &cap; E2 = {dept_id}, which is PK of E2. Lossless. ✓</div>
+
+      <h2>Dependency Preservation</h2>
+      <p>
+        A decomposition is dependency-preserving if every original FD can be checked by examining
+        at most one of the result tables (without re-joining). If an FD spans multiple decomposed tables,
+        enforcing it requires a join every time data changes — which is expensive.
+      </p>
+      <p>BCNF always gives lossless decomposition but not always dependency preservation. 3NF always gives both.</p>
+
+      <h2>Denormalization — When Normalization Goes Too Far</h2>
+      <p>
+        Normalization breaks data into many tables to minimize redundancy. But read-heavy analytical workloads may
+        repeatedly join ten or more tables, which is expensive. <em>Denormalization</em> deliberately reintroduces
+        controlled redundancy to reduce query complexity and improve read performance.
+      </p>
+      <ul>
+        <li>Pre-joining related tables into derived summary tables (data warehouses use star schema).</li>
+        <li>Storing a computed column derived from other columns (e.g., total_price = price * quantity).</li>
+        <li>Duplicating a column from a parent table into a child table to avoid a join.</li>
       </ul>
       <p>
-        <strong>Example:</strong> Storing order_total in Orders table even though it can be calculated from order_items.
+        The cost of denormalization is that update operations must maintain multiple copies of the same data.
+        This is acceptable only when reads vastly outnumber writes and stale data is tolerable (or handled via triggers/application logic).
       </p>
 
-      <h2>Normalization Process Summary</h2>
-      <div class="code-block">
-<pre>Unnormalized → 1NF (atomic values)
-1NF → 2NF (remove partial dependencies)
-2NF → 3NF (remove transitive dependencies)
-3NF → BCNF (stricter candidate key requirement)</pre>
-      </div>
+      <h2>Step-by-Step Normalization Example</h2>
+      <div class="code-block">Start: OrderDetails(order_id, cust_id, cust_name, cust_city, product_id, product_name, qty, unit_price)
 
-      <h2>Summary</h2>
-      <p>
-        Database normalization is a crucial design principle that ensures data integrity and eliminates anomalies. By understanding functional dependencies and applying normal forms, you can design databases that are maintainable, consistent, and efficient. The goal is to find the right balance between purity (full normalization) and performance (denormalization where justified).
-      </p>
-      <p>
-        In the next article, we'll explore SQL fundamentals and how to query normalized databases effectively.
-      </p>
+FDs:
+  order_id &rarr; {cust_id, cust_name, cust_city}          (order belongs to one customer)
+  cust_id  &rarr; {cust_name, cust_city}                   (transitive through order_id)
+  product_id &rarr; {product_name, unit_price}             (product info)
+  {order_id, product_id} &rarr; qty                        (qty specific to order-product pair)
+
+Candidate key: {order_id, product_id}
+
+--- Check 2NF ---
+Partial dependencies:
+  order_id   &rarr; cust_id, cust_name, cust_city  (part of PK)
+  product_id &rarr; product_name, unit_price        (part of PK)
+=&gt; NOT in 2NF
+
+--- Fix: decompose ---
+Orders(order_id [PK], cust_id [FK])
+Customers(cust_id [PK], cust_name, cust_city)
+Products(product_id [PK], product_name, unit_price)
+OrderItems(order_id [PK,FK], product_id [PK,FK], qty)
+
+--- Check 3NF ---
+In Customers: cust_id &rarr; cust_name, cust_city  (cust_id is PK, no transitive FDs)
+In Orders:    order_id &rarr; cust_id (cust_id is FK, no further transitive dependency within table)
+=&gt; All tables are in 3NF ✓
+
+--- Check BCNF ---
+In each table, the only determinant is the PK, which is a super key.
+=&gt; All tables are in BCNF ✓</div>
+
+      <h2>Summary Table of Normal Forms</h2>
+      <table>
+        <tr><th>Normal Form</th><th>Requires</th><th>Eliminates</th></tr>
+        <tr><td>1NF</td><td>Atomic values, no repeating groups</td><td>Non-atomic attributes</td></tr>
+        <tr><td>2NF</td><td>1NF + no partial dependencies</td><td>Partial FDs in composite-key relations</td></tr>
+        <tr><td>3NF</td><td>2NF + no transitive dependencies</td><td>Transitive FDs through non-key attributes</td></tr>
+        <tr><td>BCNF</td><td>Every FD determinant is a super key</td><td>All FD-based redundancy</td></tr>
+        <tr><td>4NF</td><td>BCNF + no non-trivial multivalued dependencies</td><td>Independent multivalued redundancy</td></tr>
+      </table>
+
+      <h2>What You Should Remember</h2>
+      <ul>
+        <li>Normalization is driven by functional dependencies, found by analyzing what determines what.</li>
+        <li>The three anomalies — insertion, update, deletion — are the evidence that a table needs decomposition.</li>
+        <li>Armstrong's axioms let you derive all implied FDs from a given set.</li>
+        <li>Attribute closure X+ tells you which attributes a set X can determine, and helps find candidate keys.</li>
+        <li>1NF removes multi-valued cells. 2NF removes partial dependencies. 3NF removes transitive dependencies. BCNF makes every determinant a super key.</li>
+        <li>Every lossless decomposition to BCNF is achievable; dependency preservation may require settling for 3NF.</li>
+        <li>Denormalization is a deliberate decision in read-heavy, performance-critical scenarios.</li>
+      </ul>
+
+      <p>Next: SQL Essentials — writing actual queries against a normalized schema.</p>
     </article>
   </main>
 
   <footer style="text-align: center; padding: 2rem; color: #666; border-top: 1px solid #eee; margin-top: 3rem;">
-    <p>&copy; 2024 Mudit Gupta. All rights reserved.</p>
+    <p>&copy; 2026 Mudit Gupta. All rights reserved.</p>
   </footer>
 </body>
 </html>
