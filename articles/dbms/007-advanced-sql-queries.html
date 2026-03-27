@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="X-UACompatible" content="IE=edge" />
+  <title>Advanced SQL Queries | Mudit Gupta</title>
+  <meta name="description" content="SQL Joins, Subqueries, Views, and advanced query techniques." />
+  <link rel="stylesheet" href="/assets/css/articles.css" />
+  <style>
+    .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
+    .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; color: #1a1a1a; }
+    .article-content p { margin-bottom: 1rem; color: #333; }
+    .article-content ul, .article-content ol { margin-left: 2rem; margin-bottom: 1rem; }
+    .article-content li { margin-bottom: 0.5rem; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a href="/" class="home-link">Mudit Gupta</a>
+      <div class="topbar-actions">
+        <a href="/articles.html" class="btn btn-outline">Articles</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <article class="article-content">
+      <p class="kicker">DBMS Series | Part 007</p>
+      <h1>Advanced SQL: Joins, Subqueries & Complex Queries</h1>
+      <p class="meta">SQL Advanced | 11 min read</p>
+
+      <h2>SQL Joins: Combining Data from Multiple Tables</h2>
+      <p>
+        Joins are used to combine rows from two or more tables based on related columns. They are fundamental for querying normalized databases.
+      </p>
+
+      <h2>Inner Join</h2>
+      <p>
+        Returns rows that have matching values in both tables. Only records with relationships are included.
+      </p>
+      <div class="code-block">
+<pre>SELECT Students.name, Courses.course_name
+FROM Students
+INNER JOIN Enrollments ON Students.student_id = Enrollments.student_id
+INNER JOIN Courses ON Enrollments.course_id = Courses.course_id;</pre>
+      </div>
+
+      <h2>Left Outer Join</h2>
+      <p>
+        Returns all rows from the left table and matching rows from the right table. Non-matching right rows show NULL.
+      </p>
+      <div class="code-block">
+<pre>-- All students and their enrollments (even if not enrolled)
+SELECT Students.name, Courses.course_name
+FROM Students
+LEFT JOIN Enrollments ON Students.student_id = Enrollments.student_id
+LEFT JOIN Courses ON Enrollments.course_id = Courses.course_id;</pre>
+      </div>
+
+      <h2>Right Outer Join</h2>
+      <p>
+        Returns all rows from the right table and matching rows from the left table. Non-matching left rows show NULL.
+      </p>
+      <div class="code-block">
+<pre>-- All courses and their enrolled students (even if no students enrolled)
+SELECT Students.name, Courses.course_name
+FROM Students
+RIGHT JOIN Enrollments ON Students.student_id = Enrollments.student_id
+RIGHT JOIN Courses ON Enrollments.course_id = Courses.course_id;</pre>
+      </div>
+
+      <h2>Full Outer Join</h2>
+      <p>
+        Returns all rows from both tables. Non-matching rows show NULL on both sides. (Note: Not all DBMS support FULL JOIN; use UNION instead)
+      </p>
+      <div class="code-block">
+<pre>-- MySQL alternative using UNION
+(SELECT Students.name, Courses.course_name
+ FROM Students
+ LEFT JOIN Enrollments ON Students.student_id = Enrollments.student_id
+ LEFT JOIN Courses ON Enrollments.course_id = Courses.course_id)
+UNION
+(SELECT Students.name, Courses.course_name
+ FROM Students
+ RIGHT JOIN Enrollments ON Students.student_id = Enrollments.student_id
+ RIGHT JOIN Courses ON Enrollments.course_id = Courses.course_id);</pre>
+      </div>
+
+      <h2>Cross Join</h2>
+      <p>
+        Produces Cartesian product — all possible combinations of rows from both tables.
+      </p>
+      <div class="code-block">
+<pre>-- All possible combinations of students and courses
+SELECT Students.name, Courses.course_name
+FROM Students
+CROSS JOIN Courses;</pre>
+      </div>
+
+      <h2>Self Join</h2>
+      <p>
+        Joins a table to itself. Useful for hierarchical data like employee-manager relationships.
+      </p>
+      <div class="code-block">
+<pre>SELECT e1.name as Employee, e2.name as Manager
+FROM Employees e1
+INNER JOIN Employees e2 ON e1.manager_id = e2.employee_id;</pre>
+      </div>
+
+      <h2>Subqueries</h2>
+      <p>
+        A subquery (inner query) is a query within another query. Used to filter or aggregate data.
+      </p>
+
+      <h3>Subquery in WHERE Clause</h3>
+      <div class="code-block">
+<pre>-- Find students with above average age
+SELECT name, age
+FROM Students
+WHERE age > (SELECT AVG(age) FROM Students);</pre>
+      </div>
+
+      <h3>Subquery with IN</h3>
+      <div class="code-block">
+<pre>-- Find students enrolled in specific courses
+SELECT name
+FROM Students
+WHERE student_id IN (
+  SELECT student_id FROM Enrollments 
+  WHERE course_id IN (1, 2, 3)
+);</pre>
+      </div>
+
+      <h3>Correlated Subquery</h3>
+      <p>
+        A subquery that references columns from the outer query. Executed once for each row.
+      </p>
+      <div class="code-block">
+<pre>-- Find students with above department average salary
+SELECT name, salary
+FROM Employees e1
+WHERE salary > (
+  SELECT AVG(salary) 
+  FROM Employees e2
+  WHERE e1.department_id = e2.department_id
+);</pre>
+      </div>
+
+      <h3>Subquery in FROM Clause (Derived Table)</h3>
+      <div class="code-block">
+<pre>-- Average age by department
+SELECT dept.department, dept.avg_age
+FROM (
+  SELECT department_id, AVG(age) as avg_age
+  FROM Employees
+  GROUP BY department_id
+) dept;</pre>
+      </div>
+
+      <h2>Views</h2>
+      <p>
+        A view is a virtual table created from a query result. It doesn't store data but provides a logical view of existing tables.
+      </p>
+      <p>
+        <strong>Creating a View:</strong>
+      </p>
+      <div class="code-block">
+<pre>CREATE VIEW StudentEnrollment AS
+SELECT Students.name, Courses.course_name, Enrollments.enrollment_date
+FROM Students
+INNER JOIN Enrollments ON Students.student_id = Enrollments.student_id
+INNER JOIN Courses ON Enrollments.course_id = Courses.course_id;</pre>
+      </div>
+
+      <p>
+        <strong>Using a View:</strong>
+      </p>
+      <div class="code-block">
+<pre>SELECT * FROM StudentEnrollment WHERE name = 'John Doe';</pre>
+      </div>
+
+      <p>
+        <strong>Dropping a View:</strong>
+      </p>
+      <div class="code-block">
+<pre>DROP VIEW StudentEnrollment;</pre>
+      </div>
+
+      <h2>Common Table Expressions (CTE)</h2>
+      <p>
+        CTE is a named temporary result set defined using WITH clause. Makes complex queries more readable.
+      </p>
+      <div class="code-block">
+<pre>WITH HighEarners AS (
+  SELECT employee_id, name, salary
+  FROM Employees
+  WHERE salary > 80000
+)
+SELECT * FROM HighEarners
+WHERE department_id = 2;</pre>
+      </div>
+
+      <h2>Window Functions</h2>
+      <p>
+        Window functions perform calculations across rows related to the current row.
+      </p>
+      <div class="code-block">
+<pre>-- Rank employees by salary within department
+SELECT name, salary, department_id,
+       RANK() OVER (PARTITION BY department_id ORDER BY salary DESC) as rank
+FROM Employees;</pre>
+      </div>
+
+      <h2>UNION vs UNION ALL</h2>
+      <p>
+        <strong>UNION:</strong> Combines results from multiple queries and removes duplicates.
+      </p>
+      <div class="code-block">
+<pre>SELECT name FROM Students
+UNION
+SELECT name FROM Faculty;</pre>
+      </div>
+
+      <p>
+        <strong>UNION ALL:</strong> Combines results and keeps duplicates (faster).
+      </p>
+      <div class="code-block">
+<pre>SELECT name FROM Students
+UNION ALL
+SELECT name FROM Faculty;</pre>
+      </div>
+
+      <h2>CASE Statement</h2>
+      <p>
+        Provides conditional logic within queries.
+      </p>
+      <div class="code-block">
+<pre>SELECT name, age,
+  CASE
+    WHEN age >= 21 THEN 'Adult'
+    WHEN age >= 13 THEN 'Teenager'
+    ELSE 'Child'
+  END as age_group
+FROM Students;</pre>
+      </div>
+
+      <h2>Summary</h2>
+      <p>
+        Advanced SQL techniques like joins, subqueries, views, and CTEs enable complex data retrieval from normalized databases. Mastering these concepts is essential for writing efficient, maintainable queries that handle real-world data scenarios.
+      </p>
+      <p>
+        In the next article, we'll explore query optimization techniques to ensure these complex queries perform efficiently.
+      </p>
+    </article>
+  </main>
+
+  <footer style="text-align: center; padding: 2rem; color: #666; border-top: 1px solid #eee; margin-top: 3rem;">
+    <p>&copy; 2024 Mudit Gupta. All rights reserved.</p>
+  </footer>
+</body>
+</html>

@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>Database Normalization | Mudit Gupta</title>
+  <meta name="description" content="Understanding database normalization, normal forms (1NF, 2NF, 3NF, BCNF), and functional dependencies." />
+  <link rel="stylesheet" href="/assets/css/articles.css" />
+  <style>
+    .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
+    .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; color: #1a1a1a; }
+    .article-content p { margin-bottom: 1rem; color: #333; }
+    .article-content ul, .article-content ol { margin-left: 2rem; margin-bottom: 1rem; }
+    .article-content li { margin-bottom: 0.5rem; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a href="/" class="home-link">Mudit Gupta</a>
+      <div class="topbar-actions">
+        <a href="/articles.html" class="btn btn-outline">Articles</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <article class="article-content">
+      <p class="kicker">DBMS Series | Part 005</p>
+      <h1>Database Normalization: Eliminating Redundancy & Anomalies</h1>
+      <p class="meta">Database Design | 12 min read</p>
+
+      <h2>What is Normalization?</h2>
+      <p>
+        Database normalization is a systematic process of organizing data in a database to eliminate redundancy and improve data integrity. It involves breaking down larger tables into smaller, related tables and defining relationships between them.
+      </p>
+      <p>
+        <strong>Goals of Normalization:</strong>
+      </p>
+      <ul>
+        <li>Eliminate data redundancy (same data stored multiple times)</li>
+        <li>Prevent insertion, update, and deletion anomalies</li>
+        <li>Ensure data consistency and integrity</li>
+        <li>Simplify data maintenance</li>
+      </ul>
+
+      <h2>Problems Without Normalization</h2>
+      <p>
+        <strong>Insertion Anomaly:</strong> Difficulty inserting new data due to missing related data. Example: Cannot add a new course until a student enrolls in it.
+      </p>
+      <p>
+        <strong>Update Anomaly:</strong> Data inconsistency when updating redundant information. If a student's email is stored in multiple places and you update one, others become incorrect.
+      </p>
+      <p>
+        <strong>Deletion Anomaly:</strong> Unintended data loss when deleting records. Example: Deleting the last student enrolled in a course also deletes course information.
+      </p>
+      <p>
+        <strong>Data Redundancy:</strong> Same data repeated unnecessarily, wasting storage and creating consistency issues.
+      </p>
+
+      <h2>Functional Dependency</h2>
+      <p>
+        A functional dependency (FD) is a relationship between attributes. If attribute B depends on attribute A, then for each value of A, there is exactly one value of B.
+      </p>
+      <p>
+        Notation: A → B (read as "A determines B")
+      </p>
+      <p>
+        <strong>Example:</strong> In a Student table:
+      </p>
+      <div class="code-block">
+<pre>student_id → name (one student_id has exactly one name)
+student_id → email (one student_id has exactly one email)
+email → student_id (one email belongs to exactly one student, assuming unique emails)</pre>
+      </div>
+
+      <h2>Keys and Functional Dependency</h2>
+      <p>
+        <strong>Prime Attribute:</strong> An attribute that is part of a candidate key.
+      </p>
+      <p>
+        <strong>Non-Prime Attribute:</strong> An attribute that is not part of any candidate key.
+      </p>
+      <p>
+        Functional dependencies are the basis for determining normal forms. If non-prime attributes are dependent only on the primary key (not on other attributes), the table is properly normalized.
+      </p>
+
+      <h2>Normal Forms</h2>
+
+      <h3>First Normal Form (1NF)</h3>
+      <p>
+        <strong>Rule:</strong> All attributes must contain atomic (indivisible) values. No repeating groups.
+      </p>
+      <p>
+        <strong>Violation Example:</strong> A Student table with a "phone_numbers" column containing multiple comma-separated values.
+      </p>
+      <p>
+        <strong>How to fix:</strong> Separate multi-valued attributes into a new table with a foreign key relationship.
+      </p>
+      <div class="code-block">
+<pre>BEFORE (Not 1NF):
+Students: student_id, name, phone_numbers ("123,456,789")
+
+AFTER (1NF):
+Students: student_id, name
+Phones: student_id, phone_number</pre>
+      </div>
+
+      <h3>Second Normal Form (2NF)</h3>
+      <p>
+        <strong>Requirements:</strong> Must be in 1NF, and all non-prime attributes must be fully functionally dependent on the primary key (not just part of it).
+      </p>
+      <p>
+        Addresses partial dependency — where a non-prime attribute depends on only a part of a composite primary key.
+      </p>
+      <p>
+        <strong>Violation Example:</strong>
+      </p>
+      <div class="code-block">
+<pre>StudentCourse (student_id, course_id, professor_name, professor_office)
+Primary Key: (student_id, course_id)
+
+Issue: professor_name depends only on course_id, not on the full key</pre>
+      </div>
+      <p>
+        <strong>How to fix:</strong> Separate into two tables:
+      </p>
+      <div class="code-block">
+<pre>StudentCourse: (student_id, course_id)
+Course: (course_id, professor_name, professor_office)</pre>
+      </div>
+
+      <h3>Third Normal Form (3NF)</h3>
+      <p>
+        <strong>Requirements:</strong> Must be in 2NF, and no non-prime attribute should depend on another non-prime attribute.
+      </p>
+      <p>
+        Addresses transitive dependency — where a non-prime attribute depends indirectly on the primary key through another non-prime attribute.
+      </p>
+      <p>
+        <strong>Violation Example:</strong>
+      </p>
+      <div class="code-block">
+<pre>Employee (emp_id, emp_name, dept_id, dept_name, dept_location)
+Primary Key: emp_id
+
+Issue: dept_name and dept_location depend on dept_id, not directly on emp_id
+(emp_id → dept_id → dept_name)</pre>
+      </div>
+      <p>
+        <strong>How to fix:</strong>
+      </p>
+      <div class="code-block">
+<pre>Employee: (emp_id, emp_name, dept_id)
+Department: (dept_id, dept_name, dept_location)</pre>
+      </div>
+
+      <h3>Boyce-Codd Normal Form (BCNF)</h3>
+      <p>
+        <strong>Requirements:</strong> 3NF with stricter conditions. Every determinant must be a candidate key.
+      </p>
+      <p>
+        BCNF handles edge cases where 3NF doesn't fully eliminate anomalies in tables with overlapping candidate keys.
+      </p>
+      <p>
+        <strong>Note:</strong> Most practical applications achieve 3NF, which provides good balance between normalization and query performance.
+      </p>
+
+      <h2>Denormalization: The Trade-off</h2>
+      <p>
+        While normalization reduces redundancy, excessive normalization can impact query performance due to multiple joins.
+      </p>
+      <p>
+        <strong>Denormalization</strong> is intentionally introducing redundancy for performance optimization. Used when:
+      </p>
+      <ul>
+        <li>Read performance is critical and write performance is less important</li>
+        <li>Complex joins on large tables create performance bottlenecks</li>
+        <li>Aggregate data needs to be frequently accessed</li>
+      </ul>
+      <p>
+        <strong>Example:</strong> Storing order_total in Orders table even though it can be calculated from order_items.
+      </p>
+
+      <h2>Normalization Process Summary</h2>
+      <div class="code-block">
+<pre>Unnormalized → 1NF (atomic values)
+1NF → 2NF (remove partial dependencies)
+2NF → 3NF (remove transitive dependencies)
+3NF → BCNF (stricter candidate key requirement)</pre>
+      </div>
+
+      <h2>Summary</h2>
+      <p>
+        Database normalization is a crucial design principle that ensures data integrity and eliminates anomalies. By understanding functional dependencies and applying normal forms, you can design databases that are maintainable, consistent, and efficient. The goal is to find the right balance between purity (full normalization) and performance (denormalization where justified).
+      </p>
+      <p>
+        In the next article, we'll explore SQL fundamentals and how to query normalized databases effectively.
+      </p>
+    </article>
+  </main>
+
+  <footer style="text-align: center; padding: 2rem; color: #666; border-top: 1px solid #eee; margin-top: 3rem;">
+    <p>&copy; 2024 Mudit Gupta. All rights reserved.</p>
+  </footer>
+</body>
+</html>

@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>DBMS Architecture | Mudit Gupta</title>
+  <meta name="description" content="Understanding DBMS three-tier architecture: External, Conceptual, and Internal layers." />
+  <link rel="stylesheet" href="/assets/css/articles.css" />
+  <style>
+    .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
+    .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; color: #1a1a1a; }
+    .article-content p { margin-bottom: 1rem; color: #333; }
+    .article-content ul, .article-content ol { margin-left: 2rem; margin-bottom: 1rem; }
+    .article-content li { margin-bottom: 0.5rem; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a href="/" class="home-link">Mudit Gupta</a>
+      <div class="topbar-actions">
+        <a href="/articles.html" class="btn btn-outline">Articles</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <article class="article-content">
+      <p class="kicker">DBMS Series | Part 002</p>
+      <h1>DBMS Architecture: Three-Tier Model & Data Independence</h1>
+      <p class="meta">Architecture & Design | 9 min read</p>
+
+      <h2>Overview of DBMS Architecture</h2>
+      <p>
+        DBMS architecture is based on a three-tier model also known as ANSI-SPARC architecture. This design separates the system into three independent layers: <strong>External</strong>, <strong>Conceptual</strong>, and <strong>Internal</strong> layers. Each layer has its own schema and provides a different view of the database.
+      </p>
+      <p>
+        The key benefit of this architecture is <strong>data independence</strong> — changes at one layer don't affect other layers.
+      </p>
+
+      <h2>Layer 1: External Layer (User View)</h2>
+      <p>
+        The external layer represents how individual users and applications perceive the database. Different users have different views based on their roles and needs.
+      </p>
+      <ul>
+        <li><strong>Multiple Views:</strong> Different departments see different subsets of data</li>
+        <li><strong>User-Specific:</strong> A customer service user sees only customer records; an analyst sees aggregated reports</li>
+        <li><strong>Application-Specific:</strong> A web application may see a subset of tables optimized for its queries</li>
+        <li><strong>Security:</strong> Users access only the data their role allows</li>
+      </ul>
+      <p>
+        <strong>Example:</strong> In a hospital database, a doctor sees patient medical history, while billing staff sees only payment information.
+      </p>
+
+      <h2>Layer 2: Conceptual Layer (Logical View)</h2>
+      <p>
+        The conceptual layer defines the logical structure of the entire database independent of physical storage. It represents what data exists and how it's logically organized.
+      </p>
+      <ul>
+        <li><strong>Database Schema:</strong> Complete definition of all tables, columns, and relationships</li>
+        <li><strong>Relationships:</strong> How entities relate to each other (one-to-many, many-to-many)</li>
+        <li><strong>Constraints:</strong> Primary keys, foreign keys, unique constraints, check constraints</li>
+        <li><strong>Unified View:</strong> Single source of truth for all data structure</li>
+      </ul>
+      <p>
+        <strong>What it looks like:</strong>
+      </p>
+      <div class="code-block">
+<pre>Users Table (user_id, username, email, role)
+Products Table (product_id, name, price, category_id)
+Orders Table (order_id, user_id, product_id, quantity, order_date)</pre>
+      </div>
+      <p>
+        Changes to the conceptual schema (like adding a new column) are made once here, and all views can adapt.
+      </p>
+
+      <h2>Layer 3: Internal Layer (Physical View)</h2>
+      <p>
+        The internal layer describes how data is physically stored on disk. It deals with storage structures, file organization, and optimization.
+      </p>
+      <ul>
+        <li><strong>File Organization:</strong> How tables are stored as files and blocks</li>
+        <li><strong>Indexing Strategy:</strong> Which columns are indexed for faster retrieval</li>
+        <li><strong>Storage Allocation:</strong> How disk space is allocated to tables</li>
+        <li><strong>Compression:</strong> Data compression techniques for saving space</li>
+        <li><strong>Clustering:</strong> How related data is grouped together physically</li>
+      </ul>
+      <p>
+        <strong>Example:</strong> An application doesn't need to know that User data is stored in a B-tree index or that it's split across multiple disk blocks.
+      </p>
+
+      <h2>Logical Data Independence</h2>
+      <p>
+        Logical data independence is the ability to modify the conceptual schema without changing external views or application code.
+      </p>
+      <p>
+        <strong>Scenario:</strong> Adding a new column "phone_number" to the Users table. Existing applications and views continue working without modification.
+      </p>
+      <ul>
+        <li>Flexible schema evolution</li>
+        <li>New applications can use new columns</li>
+        <li>Old applications ignore the new column</li>
+      </ul>
+
+      <h2>Physical Data Independence</h2>
+      <p>
+        Physical data independence is the ability to modify the internal schema (storage structures) without affecting the conceptual or external schemas.
+      </p>
+      <p>
+        <strong>Scenario:</strong> The DBA decides to add indexes on frequently queried columns or move data to faster storage. Applications continue running without changes.
+      </p>
+      <ul>
+        <li>Optimization without code changes</li>
+        <li>Storage migration transparency</li>
+        <li>Index changes don't affect queries</li>
+      </ul>
+
+      <h2>Database Users</h2>
+      <p>
+        Different users interact with the DBMS at different layers:
+      </p>
+      <ul>
+        <li><strong>End Users:</strong> Access the Database Management System through applications; interact with the external layer</li>
+        <li><strong>Application Developers:</strong> Write code to query the conceptual layer using SQL</li>
+        <li><strong>Database Administrators (DBAs):</strong> Manage the internal layer, optimization, and security</li>
+        <li><strong>Database Designers:</strong> Design the conceptual schema and relationships</li>
+      </ul>
+
+      <h2>DBMS Interfaces</h2>
+      <p>
+        Users interact with DBMS through various interfaces:
+      </p>
+      <ul>
+        <li><strong>Query Interface (SQL):</strong> Write SELECT, INSERT, UPDATE, DELETE statements</li>
+        <li><strong>Forms Interface:</strong> GUI-based data entry forms</li>
+        <li><strong>Report Interface:</strong> Generate formatted reports</li>
+        <li><strong>API Interface:</strong> Application programming interfaces for developers</li>
+        <li><strong>Command-Line Interface (CLI):</strong> Direct database interaction</li>
+      </ul>
+
+      <h2>Data Model</h2>
+      <p>
+        The data model defines the structure and relationships of data. Common types include:
+      </p>
+      <ul>
+        <li><strong>Relational Model:</strong> Tables with rows and columns (SQL databases)</li>
+        <li><strong>Document Model:</strong> JSON/BSON documents (MongoDB)</li>
+        <li><strong>Key-Value Model:</strong> Simple key-value pairs (Redis)</li>
+        <li><strong>Graph Model:</strong> Nodes and edges representing relationships</li>
+      </ul>
+
+      <h2>Summary</h2>
+      <p>
+        The three-tier DBMS architecture provides separation of concerns:
+      </p>
+      <ul>
+        <li><strong>External Layer:</strong> User-specific views</li>
+        <li><strong>Conceptual Layer:</strong> Logical database design</li>
+        <li><strong>Internal Layer:</strong> Physical storage and optimization</li>
+      </ul>
+      <p>
+        This separation ensures <strong>data independence</strong>, allowing changes at one layer without affecting others. Understanding this architecture is crucial for designing scalable, maintainable databases and building robust applications.
+      </p>
+    </article>
+  </main>
+
+  <footer style="text-align: center; padding: 2rem; color: #666; border-top: 1px solid #eee; margin-top: 3rem;">
+    <p>&copy; 2024 Mudit Gupta. All rights reserved.</p>
+  </footer>
+</body>
+</html>

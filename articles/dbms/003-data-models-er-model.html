@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>Data Models & ER Model | Mudit Gupta</title>
+  <meta name="description" content="Entity-Relationship Model, components, and design principles for database modeling." />
+  <link rel="stylesheet" href="/assets/css/articles.css" />
+  <style>
+    .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
+    .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; color: #1a1a1a; }
+    .article-content p { margin-bottom: 1rem; color: #333; }
+    .article-content ul, .article-content ol { margin-left: 2rem; margin-bottom: 1rem; }
+    .article-content li { margin-bottom: 0.5rem; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a href="/" class="home-link">Mudit Gupta</a>
+      <div class="topbar-actions">
+        <a href="/articles.html" class="btn btn-outline">Articles</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <article class="article-content">
+      <p class="kicker">DBMS Series | Part 003</p>
+      <h1>Data Models & Entity-Relationship (ER) Model</h1>
+      <p class="meta">Database Design | 10 min read</p>
+
+      <h2>What is a Data Model?</h2>
+      <p>
+        A data model is a blueprint that describes how data is organized, structured, and related in a database. It serves as a communication tool between stakeholders, developers, and database designers.
+      </p>
+      <p>
+        Data models exist at different levels of abstraction:
+      </p>
+      <ul>
+        <li><strong>Conceptual Data Model:</strong> High-level, technology-independent view (ER diagrams)</li>
+        <li><strong>Logical Data Model:</strong> Intermediate level showing relational structure (Relational Model)</li>
+        <li><strong>Physical Data Model:</strong> Low-level, implementation-specific (actual database schema)</li>
+      </ul>
+
+      <h2>Types of Data Models</h2>
+      <p>
+        <strong>1. Relational Model</strong> — Data organized in tables (relations) with rows and columns. Most common in business applications (MySQL, PostgreSQL, Oracle).
+      </p>
+      <p>
+        <strong>2. Hierarchical Model</strong> — Data organized in a tree structure with parent-child relationships. Limited and rarely used today.
+      </p>
+      <p>
+        <strong>3. Network Model</strong> — Allows multiple parents for a node, providing more flexibility than hierarchical. Complex and outdated.
+      </p>
+      <p>
+        <strong>4. Entity-Relationship Model</strong> — Conceptual model focusing on entities and their relationships, providing a visual representation before implementation.
+      </p>
+      <p>
+        <strong>5. NoSQL Models</strong> — Document model (MongoDB), Key-value model (Redis), Graph model (Neo4j), Wide-column model (Cassandra).
+      </p>
+
+      <h2>What is Entity-Relationship (ER) Model?</h2>
+      <p>
+        The Entity-Relationship model, introduced by Peter Chen in 1976, is a conceptual data model used to design databases before physical implementation. It represents entities, attributes, and their relationships in an easy-to-understand visual format.
+      </p>
+      <p>
+        The ER model is widely used because it:
+      </p>
+      <ul>
+        <li>Provides a clear, visual representation of data structure</li>
+        <li>Is independent of any database system</li>
+        <li>Facilitates communication between technical and non-technical stakeholders</li>
+        <li>Helps eliminate data redundancy through normalization</li>
+      </ul>
+
+      <h2>Components of ER Model</h2>
+      <p>
+        <strong>Entity:</strong> A real-world object or concept that has independent existence. Examples: Student, Course, Employee, Product.
+      </p>
+      <ul>
+        <li>Represented as a rectangle in ER diagrams</li>
+        <li>Strong Entity: Can exist independently (Student)</li>
+        <li>Weak Entity: Depends on another entity for existence (Enrollment depends on Student and Course)</li>
+      </ul>
+
+      <p>
+        <strong>Attribute:</strong> Properties or characteristics of an entity. Examples: Student has name, roll_number, email, phone.
+      </p>
+      <ul>
+        <li>Represented as an oval in ER diagrams</li>
+        <li>Simple Attribute: Cannot be broken down (age)</li>
+        <li>Composite Attribute: Can be decomposed (address = city + street + zip code)</li>
+        <li>Derived Attribute: Calculated from other attributes (age = current_year - birth_year)</li>
+        <li>Multi-valued Attribute: Can have multiple values (phone_numbers: ["123", "456", "789"])</li>
+      </ul>
+
+      <p>
+        <strong>Relationship:</strong> Association between two or more entities. Examples: Student enrolls in Course, Employee works in Department.
+      </p>
+      <ul>
+        <li>Represented as a diamond in ER diagrams</li>
+        <li>Describes how entities interact and relate</li>
+      </ul>
+
+      <h2>Types of Relationships</h2>
+      <p>
+        <strong>One-to-One (1:1)</strong> — Each entity of one type relates to at most one entity of another type. Example: A person has one passport, a passport belongs to one person.
+      </p>
+      <p>
+        <strong>One-to-Many (1:N)</strong> — One entity relates to many entities of another type. Example: One department has many employees, but each employee belongs to one department.
+      </p>
+      <p>
+        <strong>Many-to-Many (M:N)</strong> — Many entities relate to many entities of another type. Example: Students enroll in many courses, and each course has many students. Requires an intermediate junction table.
+      </p>
+      <p>
+        <strong>Self-Referencing:</strong> Entity relates to itself. Example: Employee has a manager, which is also an employee.
+      </p>
+
+      <h2>Cardinality and Participation</h2>
+      <p>
+        <strong>Cardinality:</strong> Specifies the number of entities that can participate in a relationship. Shown as 1:1, 1:M, or M:N.
+      </p>
+      <p>
+        <strong>Participation:</strong> Specifies whether an entity must participate in a relationship (total participation) or may optionally participate (partial participation).
+      </p>
+      <ul>
+        <li>Total (Mandatory): Shown with double line — every instance must participate</li>
+        <li>Partial (Optional): Shown with single line — instances may not participate</li>
+      </ul>
+      <p>
+        <strong>Example:</strong> In a University database, every Student must enroll in at least one Course (total participation), but a Course may exist with zero enrolled students (partial participation).
+      </p>
+
+      <h2>ER Diagram Symbols</h2>
+      <div class="code-block">
+<pre>Entity          → Rectangle
+Attribute       → Oval
+Relationship    → Diamond
+Primary Key     → Underlined attribute
+One-to-One      → 1:1 label
+One-to-Many     → 1:N label
+Many-to-Many    → M:N label
+Weak Entity     → Double rectangle
+Derived Attr    → Dashed oval</pre>
+      </div>
+
+      <h2>Extended ER (EER) Model</h2>
+      <p>
+        The Extended ER model adds advanced features:
+      </p>
+      <ul>
+        <li><strong>Generalization:</strong> Grouping similar entities (Vehicle is generalization of Car, Bike, Truck)</li>
+        <li><strong>Specialization:</strong> Breaking down generic entity into specific types</li>
+        <li><strong>Inheritance:</strong> Child entities inherit attributes from parent entities</li>
+        <li><strong>Aggregation:</strong> Treating relationship as an entity for further relationships</li>
+      </ul>
+
+      <h2>ER to Relational Conversion</h2>
+      <p>
+        Once an ER diagram is finalized, it's converted to a relational schema:
+      </p>
+      <ul>
+        <li>Each entity becomes a table</li>
+        <li>Each attribute becomes a column</li>
+        <li>Primary key of an entity becomes the primary key of the table</li>
+        <li>Relationships are represented using foreign keys</li>
+        <li>Many-to-Many relationships create junction tables</li>
+      </ul>
+
+      <h2>Summary</h2>
+      <p>
+        The ER model is a powerful tool for conceptual database design. It provides a clear, visual way to understand data structure and relationships before implementation. By understanding entities, attributes, relationships, and their types, you can design databases that are normalized, efficient, and maintainable.
+      </p>
+      <p>
+        In the next article, we'll explore the Relational Model and how keys are used to uniquely identify and relate data.
+      </p>
+    </article>
+  </main>
+
+  <footer style="text-align: center; padding: 2rem; color: #666; border-top: 1px solid #eee; margin-top: 3rem;">
+    <p>&copy; 2024 Mudit Gupta. All rights reserved.</p>
+  </footer>
+</body>
+</html>

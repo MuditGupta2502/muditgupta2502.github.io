@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>SQL Essentials & Operators | Mudit Gupta</title>
+  <meta name="description" content="SQL fundamentals, DDL, DML, DCL commands, and operators for database queries." />
+  <link rel="stylesheet" href="/assets/css/articles.css" />
+  <style>
+    .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
+    .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; color: #1a1a1a; }
+    .article-content p { margin-bottom: 1rem; color: #333; }
+    .article-content ul, .article-content ol { margin-left: 2rem; margin-bottom: 1rem; }
+    .article-content li { margin-bottom: 0.5rem; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a href="/" class="home-link">Mudit Gupta</a>
+      <div class="topbar-actions">
+        <a href="/articles.html" class="btn btn-outline">Articles</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <article class="article-content">
+      <p class="kicker">DBMS Series | Part 006</p>
+      <h1>SQL Essentials: DDL, DML, Operators & Fundamentals</h1>
+      <p class="meta">SQL Fundamentals | 10 min read</p>
+
+      <h2>What is SQL?</h2>
+      <p>
+        SQL (Structured Query Language) is a standardized programming language used to manage and manipulate relational databases. It provides a consistent interface across different DBMS platforms (MySQL, PostgreSQL, Oracle, SQL Server).
+      </p>
+      <p>
+        SQL has three main categories:
+      </p>
+      <ul>
+        <li><strong>DDL:</strong> Data Definition Language (CREATE, ALTER, DROP)</li>
+        <li><strong>DML:</strong> Data Manipulation Language (SELECT, INSERT, UPDATE, DELETE)</li>
+        <li><strong>DCL:</strong> Data Control Language (GRANT, REVOKE)</li>
+      </ul>
+
+      <h2>DDL: Data Definition Language</h2>
+      <p>
+        DDL statements define the structure of the database and tables.
+      </p>
+      <p>
+        <strong>CREATE TABLE:</strong> Creates a new table with specified columns and constraints.
+      </p>
+      <div class="code-block">
+<pre>CREATE TABLE Students (
+  student_id INT PRIMARY KEY AUTO_INCREMENT,
+  name VARCHAR(100) NOT NULL,
+  email VARCHAR(100) UNIQUE,
+  age INT CHECK (age >= 18),
+  enrollment_date DATE DEFAULT CURDATE()
+);</pre>
+      </div>
+
+      <p>
+        <strong>ALTER TABLE:</strong> Modifies an existing table structure.
+      </p>
+      <div class="code-block">
+<pre>-- Add a column
+ALTER TABLE Students ADD phone VARCHAR(15);
+
+-- Drop a column
+ALTER TABLE Students DROP COLUMN phone;
+
+-- Modify column
+ALTER TABLE Students MODIFY name VARCHAR(150);</pre>
+      </div>
+
+      <p>
+        <strong>DROP TABLE:</strong> Deletes a table and all its data.
+      </p>
+      <div class="code-block">
+<pre>DROP TABLE Students;
+DROP TABLE IF EXISTS Students; -- Safe drop</pre>
+      </div>
+
+      <p>
+        <strong>TRUNCATE TABLE:</strong> Deletes all rows but keeps the table structure.
+      </p>
+      <div class="code-block">
+<pre>TRUNCATE TABLE Students;</pre>
+      </div>
+
+      <h2>DML: Data Manipulation Language</h2>
+      <p>
+        <strong>SELECT:</strong> Retrieves data from tables.
+      </p>
+      <div class="code-block">
+<pre>SELECT column1, column2 FROM table_name;
+SELECT * FROM Students; -- All columns
+SELECT name, email FROM Students WHERE age > 20;</pre>
+      </div>
+
+      <p>
+        <strong>INSERT:</strong> Adds new rows to a table.
+      </p>
+      <div class="code-block">
+<pre>INSERT INTO Students (name, email, age)
+VALUES ('John Doe', 'john@example.com', 22);
+
+INSERT INTO Students 
+VALUES (1, 'Jane Doe', 'jane@example.com', 21, '2024-01-15');</pre>
+      </div>
+
+      <p>
+        <strong>UPDATE:</strong> Modifies existing data.
+      </p>
+      <div class="code-block">
+<pre>UPDATE Students 
+SET email = 'newemail@example.com' 
+WHERE student_id = 1;
+
+UPDATE Students 
+SET age = age + 1; -- Increment all ages</pre>
+      </div>
+
+      <p>
+        <strong>DELETE:</strong> Removes rows from a table.
+      </p>
+      <div class="code-block">
+<pre>DELETE FROM Students WHERE student_id = 1;
+DELETE FROM Students WHERE age < 18;</pre>
+      </div>
+
+      <h2>Comparison Operators</h2>
+      <ul>
+        <li><strong>=</strong> Equal to: WHERE age = 25</li>
+        <li><strong>!=</strong> or <strong>&lt;&gt;</strong> Not equal: WHERE status != 'inactive'</li>
+        <li><strong>&gt;</strong> Greater than: WHERE salary > 50000</li>
+        <li><strong>&lt;</strong> Less than: WHERE age < 30</li>
+        <li><strong>&gt;=</strong> Greater or equal: WHERE score >= 80</li>
+        <li><strong>&lt;=</strong> Less or equal: WHERE quantity <= 10</li>
+      </ul>
+
+      <h2>Logical Operators</h2>
+      <p>
+        <strong>AND:</strong> All conditions must be true.
+      </p>
+      <div class="code-block">
+<pre>SELECT * FROM Students 
+WHERE age > 20 AND grade = 'A';</pre>
+      </div>
+
+      <p>
+        <strong>OR:</strong> At least one condition must be true.
+      </p>
+      <div class="code-block">
+<pre>SELECT * FROM Students 
+WHERE status = 'active' OR age > 25;</pre>
+      </div>
+
+      <p>
+        <strong>NOT:</strong> Negates a condition.
+      </p>
+      <div class="code-block">
+<pre>SELECT * FROM Students 
+WHERE NOT status = 'inactive';</pre>
+      </div>
+
+      <h2>Pattern Matching: LIKE</h2>
+      <p>
+        LIKE is used for pattern matching with wildcards.
+      </p>
+      <div class="code-block">
+<pre>-- Start with 'J'
+SELECT * FROM Students WHERE name LIKE 'J%';
+
+-- End with 'son'
+SELECT * FROM Students WHERE name LIKE '%son';
+
+-- Contains 'oh'
+SELECT * FROM Students WHERE name LIKE '%oh%';
+
+-- Exact 4 characters
+SELECT * FROM Students WHERE name LIKE '____';</pre>
+      </div>
+
+      <h2>IN and BETWEEN</h2>
+      <p>
+        <strong>IN:</strong> Matches values in a list.
+      </p>
+      <div class="code-block">
+<pre>SELECT * FROM Students 
+WHERE student_id IN (1, 5, 10);</pre>
+      </div>
+
+      <p>
+        <strong>BETWEEN:</strong> Matches range of values (inclusive).
+      </p>
+      <div class="code-block">
+<pre>SELECT * FROM Students 
+WHERE age BETWEEN 20 AND 25;</pre>
+      </div>
+
+      <h2>NULL Checks</h2>
+      <div class="code-block">
+<pre>-- Find NULL values
+SELECT * FROM Students WHERE email IS NULL;
+
+-- Find non-NULL values
+SELECT * FROM Students WHERE email IS NOT NULL;</pre>
+      </div>
+
+      <h2>Aggregate Functions</h2>
+      <ul>
+        <li><strong>COUNT():</strong> Counts number of rows</li>
+        <li><strong>SUM():</strong> Sums numeric values</li>
+        <li><strong>AVG():</strong> Calculates average</li>
+        <li><strong>MAX():</strong> Finds maximum value</li>
+        <li><strong>MIN():</strong> Finds minimum value</li>
+      </ul>
+      <div class="code-block">
+<pre>SELECT COUNT(*) FROM Students;
+SELECT AVG(age) FROM Students;
+SELECT MAX(salary) FROM Employees;</pre>
+      </div>
+
+      <h2>ORDER BY and GROUP BY</h2>
+      <p>
+        <strong>ORDER BY:</strong> Sorts result set.
+      </p>
+      <div class="code-block">
+<pre>SELECT * FROM Students 
+ORDER BY age DESC;
+
+SELECT * FROM Students 
+ORDER BY name ASC, age DESC;</pre>
+      </div>
+
+      <p>
+        <strong>GROUP BY:</strong> Groups rows with aggregate functions.
+      </p>
+      <div class="code-block">
+<pre>SELECT department, COUNT(*) as emp_count
+FROM Employees
+GROUP BY department;</pre>
+      </div>
+
+      <h2>Constraints</h2>
+      <ul>
+        <li><strong>PRIMARY KEY:</strong> Uniquely identifies each row</li>
+        <li><strong>FOREIGN KEY:</strong> References primary key of another table</li>
+        <li><strong>UNIQUE:</strong> All values in column are different</li>
+        <li><strong>NOT NULL:</strong> Column must have a value</li>
+        <li><strong>CHECK:</strong> Ensures values satisfy a condition</li>
+        <li><strong>DEFAULT:</strong> Provides default value if none specified</li>
+      </ul>
+
+      <h2>Summary</h2>
+      <p>
+        SQL is the fundamental language for interacting with relational databases. Understanding DDL for defining structures, DML for manipulating data, and various operators for filtering and transforming data is essential for any database professional. These basics form the foundation for more advanced SQL topics like joins, subqueries, and optimization.
+      </p>
+      <p>
+        In the next article, we'll explore advanced SQL queries including joins, subqueries, and complex data retrieval.
+      </p>
+    </article>
+  </main>
+
+  <footer style="text-align: center; padding: 2rem; color: #666; border-top: 1px solid #eee; margin-top: 3rem;">
+    <p>&copy; 2024 Mudit Gupta. All rights reserved.</p>
+  </footer>
+</body>
+</html>

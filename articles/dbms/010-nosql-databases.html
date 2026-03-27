@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>NoSQL Databases | Mudit Gupta</title>
+  <meta name="description" content="Understanding NoSQL databases, types, CAP theorem, and when to use them." />
+  <link rel="stylesheet" href="/assets/css/articles.css" />
+  <style>
+    .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
+    .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; color: #1a1a1a; }
+    .article-content p { margin-bottom: 1rem; color: #333; }
+    .article-content ul, .article-content ol { margin-left: 2rem; margin-bottom: 1rem; }
+    .article-content li { margin-bottom: 0.5rem; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a href="/" class="home-link">Mudit Gupta</a>
+      <div class="topbar-actions">
+        <a href="/articles.html" class="btn btn-outline">Articles</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <article class="article-content">
+      <p class="kicker">DBMS Series | Part 010</p>
+      <h1>NoSQL Databases: Beyond Relational Data</h1>
+      <p class="meta">Database Systems | 10 min read</p>
+
+      <h2>What is NoSQL?</h2>
+      <p>
+        NoSQL means "Not Only SQL" — it refers to non-relational databases designed for unstructured or semi-structured data. Instead of rigid tables, NoSQL databases use flexible schemas and horizontal scalability.
+      </p>
+      <p>
+        <strong>Key Characteristics:</strong>
+      </p>
+      <ul>
+        <li>Schema-less or flexible schema</li>
+        <li>Horizontal scalability (spread across servers)</li>
+        <li>High availability and fault tolerance</li>
+        <li>Optimized for specific access patterns</li>
+        <li>Handle large volumes of diverse data types</li>
+      </ul>
+
+      <h2>Why NoSQL?</h2>
+      <p>
+        Relational databases have limitations for certain scenarios:
+      </p>
+      <ul>
+        <li><strong>Scalability:</strong> RDBMS scale vertically (bigger servers); NoSQL scales horizontally (more servers)</li>
+        <li><strong>Flexibility:</strong> RDBMS require schema definition; NoSQL adapts to changing data structures</li>
+        <li><strong>Performance:</strong> NoSQL optimized for specific queries (documents, key-value, graphs)</li>
+        <li><strong>Big Data:</strong> Handling massive datasets across distributed systems</li>
+      </ul>
+
+      <h2>Types of NoSQL Databases</h2>
+
+      <h3>Key-Value Stores</h3>
+      <p>
+        Simplest NoSQL type — stores data as key-value pairs. Extremely fast for direct lookups.
+      </p>
+      <p>
+        <strong>Examples:</strong> Redis, Memcached, DynamoDB
+      </p>
+      <p>
+        <strong>Use Cases:</strong> Caching, sessions, leaderboards, real-time analytics
+      </p>
+      <div class="code-block">
+<pre>-- Redis (pseudo-code)
+SET user:123 {"name": "John", "email": "john@ex.com"}
+GET user:123</pre>
+      </div>
+
+      <h3>Document Databases</h3>
+      <p>
+        Store data as documents (JSON, BSON). Semi-structured, flexible schema, nested data support.
+      </p>
+      <p>
+        <strong>Examples:</strong> MongoDB, CouchDB, Firebase
+      </p>
+      <p>
+        <strong>Use Cases:</strong> Content management, user profiles, logs, catalogs
+      </p>
+      <div class="code-block">
+<pre>-- MongoDB (JavaScript syntax)
+db.students.insertOne({
+  _id: 1,
+  name: "John",
+  email: "john@ex.com",
+  courses: [
+    {course_id: 101, grade: "A"},
+    {course_id: 102, grade: "B"}
+  ]
+});</pre>
+      </div>
+
+      <h3>Column-Family Stores</h3>
+      <p>
+        Organize data by columns instead of rows. Optimized for analytical queries and time-series data.
+      </p>
+      <p>
+        <strong>Examples:</strong> Cassandra, HBase, Bigtable
+      </p>
+      <p>
+        <strong>Use Cases:</strong> Time-series data, analytics, sensor data, logs
+      </p>
+      <div class="code-block">
+<pre>-- Column-family structure
+Students table:
+  Row Key: student_1
+  Column Family: info { name: "John", email: "john@ex.com" }
+  Column Family: grades { math: 90, english: 85 }</pre>
+      </div>
+
+      <h3>Graph Databases</h3>
+      <p>
+        Optimized for relationships and graph traversals. Nodes represent entities, edges represent relationships.
+      </p>
+      <p>
+        <strong>Examples:</strong> Neo4j, Amazon Neptune, ArangoDB
+      </p>
+      <p>
+        <strong>Use Cases:</strong> Social networks, recommendation engines, knowledge graphs, fraud detection
+      </p>
+      <div class="code-block">
+<pre>-- Neo4j (Cypher query language)
+MATCH (user:User)-[:FOLLOWS]->(friend:User)-[:FOLLOWS]->(recommendation:User)
+WHERE user.id = 123
+RETURN recommendation</pre>
+      </div>
+
+      <h3>Search Engines</h3>
+      <p>
+        Specialized NoSQL for full-text search and analytics on text data.
+      </p>
+      <p>
+        <strong>Examples:</strong> Elasticsearch, Solr, Algolia
+      </p>
+      <p>
+        <strong>Use Cases:</strong> Full-text search, log analysis, application search, metrics
+      </p>
+
+      <h2>ACID vs BASE</h2>
+      <p>
+        <strong>ACID (Relational):</strong> Atomicity, Consistency, Isolation, Durability. Strong guarantees but less scalable.
+      </p>
+      <p>
+        <strong>BASE (NoSQL):</strong> Basically Available, Soft-state, Eventually Consistent. Scalable but weaker guarantees.
+      </p>
+      <div class="code-block">
+<pre>ACID: Strong consistency, predictable behavior
+BASE: Eventual consistency, higher availability</pre>
+      </div>
+
+      <h2>CAP Theorem</h2>
+      <p>
+        The CAP theorem states that a distributed database can guarantee only 2 of 3 properties:
+      </p>
+      <ul>
+        <li><strong>Consistency:</strong> All nodes see same data</li>
+        <li><strong>Availability:</strong> System remains operational</li>
+        <li><strong>Partition Tolerance:</strong> Survives network splits</li>
+      </ul>
+      <p>
+        <strong>Example Choices:</strong>
+      </p>
+      <ul>
+        <li><strong>CP:</strong> Cassandra, MongoDB (consistency over availability)</li>
+        <li><strong>AP:</strong> DynamoDB, Riak (availability over consistency)</li>
+      </ul>
+
+      <h2>Schemaless Design</h2>
+      <p>
+        NoSQL databases don't force schema definition. Documents can have different structures.
+      </p>
+      <div class="code-block">
+<pre>-- MongoDB documents with different structures
+{name: "John", age: 25}
+{name: "Jane", email: "jane@ex.com"}
+{name: "Bob", phone: "+1-555-1234", country: "USA"}</pre>
+      </div>
+      <p>
+        <strong>Advantages:</strong> Flexible, quick iteration
+      </p>
+      <p>
+        <strong>Disadvantages:</strong> Requires application-level validation, harder to enforce data integrity
+      </p>
+
+      <h2>Sharding (Horizontal Scaling)</h2>
+      <p>
+        NoSQL databases scale by distributing data across multiple servers (shards) based on a shard key.
+      </p>
+      <div class="code-block">
+<pre>-- User data sharded by user_id
+Shard 1: users 1-1000
+Shard 2: users 1001-2000
+Shard 3: users 2001-3000</pre>
+      </div>
+
+      <h2>RDBMS vs NoSQL: When to Use Each</h2>
+      <p>
+        <strong>Use RDBMS when:</strong>
+      </p>
+      <ul>
+        <li>Data is highly structured and relational (e.g., banking, ERP)</li>
+        <li>ACID compliance is crucial</li>
+        <li>Complex joins and transactions are required</li>
+        <li>Data integrity is paramount</li>
+      </ul>
+      <p>
+        <strong>Use NoSQL when:</strong>
+      </p>
+      <ul>
+        <li>Data is unstructured or semi-structured (JSON, logs, media)</li>
+        <li>Horizontal scalability is needed</li>
+        <li>High write throughput required</li>
+        <li>Schema changes frequently</li>
+        <li>Big Data scenarios with massive datasets</li>
+      </ul>
+
+      <h2>Modern Approach: Polyglot Persistence</h2>
+      <p>
+        Many modern applications use multiple databases for different needs:
+      </p>
+      <ul>
+        <li><strong>RDBMS:</strong> Transactional data (users, accounts)</li>
+        <li><strong>Document DB:</strong> User profiles, content (MongoDB)</li>
+        <li><strong>Cache:</strong> Sessions, frequently accessed data (Redis)</li>
+        <li><strong>Graph DB:</strong> Relationships and recommendations (Neo4j)</li>
+        <li><strong>Search Engine:</strong> Full-text search (Elasticsearch)</li>
+      </ul>
+
+      <h2>Summary</h2>
+      <p>
+        NoSQL databases provide alternatives to relational databases optimized for scale, flexibility, and specific data models. Understanding when and how to use different NoSQL types is essential for building modern data systems. The choice between RDBMS and NoSQL depends on your specific requirements for consistency, availability, scalability, and data structure.
+      </p>
+      <p>
+        In our final article, we'll explore database security, a critical aspect that applies to both relational and NoSQL systems.
+      </p>
+    </article>
+  </main>
+
+  <footer style="text-align: center; padding: 2rem; color: #666; border-top: 1px solid #eee; margin-top: 3rem;">
+    <p>&copy; 2024 Mudit Gupta. All rights reserved.</p>
+  </footer>
+</body>
+</html>

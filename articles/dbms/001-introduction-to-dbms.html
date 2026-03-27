@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>Introduction to DBMS | Mudit Gupta</title>
+  <meta name="description" content="Comprehensive guide to Database Management Systems, fundamentals, types, and importance." />
+  <link rel="stylesheet" href="/assets/css/articles.css" />
+  <style>
+    .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
+    .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; color: #1a1a1a; }
+    .article-content p { margin-bottom: 1rem; color: #333; }
+    .article-content ul, .article-content ol { margin-left: 2rem; margin-bottom: 1rem; }
+    .article-content li { margin-bottom: 0.5rem; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a href="/" class="home-link">Mudit Gupta</a>
+      <div class="topbar-actions">
+        <a href="/articles.html" class="btn btn-outline">Articles</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <article class="article-content">
+      <p class="kicker">DBMS Series | Part 001</p>
+      <h1>Introduction to DBMS: Data, Information & Database Management</h1>
+      <p class="meta">Database Management | 8 min read</p>
+
+      <h2>What is a Database?</h2>
+      <p>
+        A database is an organized collection of structured data stored and accessed electronically. Unlike a simple file system where data is scattered across multiple files, a database provides a centralized repository with mechanisms to efficiently store, retrieve, and manage data.
+      </p>
+      <p>
+        Key characteristics of a database include:
+      </p>
+      <ul>
+        <li><strong>Organized Structure:</strong> Data is organized in tables, collections, or documents</li>
+        <li><strong>Persistent Storage:</strong> Data persists across sessions and system reboots</li>
+        <li><strong>Efficient Access:</strong> Quick retrieval using queries and indexes</li>
+        <li><strong>Data Integrity:</strong> Maintains consistency and validity of data</li>
+        <li><strong>Security:</strong> Controls access and protects sensitive information</li>
+      </ul>
+
+      <h2>Understanding Data vs Information</h2>
+      <p>
+        <strong>Data</strong> is raw facts and figures without context. For example: "25", "John", "2024".
+      </p>
+      <p>
+        <strong>Information</strong> is processed, organized data that provides meaningful insights. When the raw data "25, John, 2024" is processed, it becomes "John is 25 years old and joined in 2024" — this is information.
+      </p>
+      <p>
+        A DBMS transforms raw data into actionable information through querying, aggregation, and analysis.
+      </p>
+
+      <h2>What is a Database Management System?</h2>
+      <p>
+        A Database Management System (DBMS) is software that manages the creation, maintenance, and use of databases. It acts as an intermediary between users/applications and the database, providing tools and interfaces to interact with data.
+      </p>
+      <p>
+        Common DBMS examples include:
+      </p>
+      <ul>
+        <li><strong>Relational:</strong> MySQL, PostgreSQL, Oracle, SQL Server, MariaDB</li>
+        <li><strong>NoSQL:</strong> MongoDB, Cassandra, Redis, Elasticsearch</li>
+        <li><strong>Graph:</strong> Neo4j, Amazon Neptune</li>
+        <li><strong>Document:</strong> CouchDB, Firebase</li>
+      </ul>
+
+      <h2>Need for DBMS</h2>
+      <p>
+        Before DBMS technology, organizations relied on file systems to store data. This approach had serious limitations:
+      </p>
+      <ul>
+        <li><strong>Data Redundancy:</strong> Same data stored in multiple files led to inconsistency</li>
+        <li><strong>Poor Scalability:</strong> Managing large datasets was cumbersome</li>
+        <li><strong>Limited Security:</strong> No built-in access control mechanisms</li>
+        <li><strong>Slow Retrieval:</strong> Finding specific data required searching through files</li>
+        <li><strong>Concurrency Issues:</strong> Multiple users couldn't safely access data simultaneously</li>
+      </ul>
+      <p>
+        DBMS solved these problems by providing centralized data management, ACID compliance, indexing, and multi-user support.
+      </p>
+
+      <h2>Advantages of DBMS</h2>
+      <ul>
+        <li><strong>Data Consistency:</strong> Enforces rules that keep data accurate and up-to-date</li>
+        <li><strong>Reduced Data Redundancy:</strong> Stores data once, eliminates duplicates</li>
+        <li><strong>Improved Security:</strong> Role-based access control and encryption</li>
+        <li><strong>Concurrent Access:</strong> Multiple users can work simultaneously without conflicts</li>
+        <li><strong>Backup & Recovery:</strong> Automatic backup mechanisms protect against data loss</li>
+        <li><strong>Data Independence:</strong> Logical and physical separation of data storage</li>
+        <li><strong>Efficient Querying:</strong> SQL and query optimization for fast data retrieval</li>
+        <li><strong>Scalability:</strong> Handles millions of records efficiently</li>
+      </ul>
+
+      <h2>Disadvantages of DBMS</h2>
+      <ul>
+        <li><strong>Complexity:</strong> DBMS systems are complex and require skilled administrators</li>
+        <li><strong>Cost:</strong> Enterprise DBMS licenses can be expensive (though open-source options exist)</li>
+        <li><strong>Performance Overhead:</strong> Additional layers can introduce latency for simple operations</li>
+        <li><strong>Maintenance:</strong> Regular updates, backups, and monitoring are required</li>
+        <li><strong>Learning Curve:</strong> Proper design and SQL expertise needed for optimal use</li>
+      </ul>
+
+      <h2>Types of Databases</h2>
+      <p>
+        <strong>1. Relational Databases (RDBMS)</strong> — Organize data in tables with rows and columns, using SQL for queries. Best for structured data with defined schemas.
+      </p>
+      <p>
+        <strong>2. NoSQL Databases</strong> — Flexible, schema-less storage for unstructured data. Includes document (MongoDB), key-value (Redis), and wide-column (Cassandra) stores.
+      </p>
+      <p>
+        <strong>3. Graph Databases</strong> — Optimized for relationships between entities. Used for social networks, recommendation engines, and knowledge graphs.
+      </p>
+      <p>
+        <strong>4. Search Engines</strong> — Designed for full-text search and analytics (Elasticsearch, Solr).
+      </p>
+
+      <h2>Summary</h2>
+      <p>
+        A DBMS is the foundation of modern data management. It transforms raw data into information while ensuring consistency, security, and performance. Understanding DBMS fundamentals is essential for any engineer building data-driven applications.
+      </p>
+      <p>
+        In the next article, we'll explore DBMS architecture, including the three layers that separate concerns and enable data independence.
+      </p>
+    </article>
+  </main>
+
+  <footer style="text-align: center; padding: 2rem; color: #666; border-top: 1px solid #eee; margin-top: 3rem;">
+    <p>&copy; 2024 Mudit Gupta. All rights reserved.</p>
+  </footer>
+</body>
+</html>

@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>Database Security | Mudit Gupta</title>
+  <meta name="description" content="Database security practices, authentication, authorization, encryption, and compliance." />
+  <link rel="stylesheet" href="/assets/css/articles.css" />
+  <style>
+    .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
+    .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; color: #1a1a1a; }
+    .article-content p { margin-bottom: 1rem; color: #333; }
+    .article-content ul, .article-content ol { margin-left: 2rem; margin-bottom: 1rem; }
+    .article-content li { margin-bottom: 0.5rem; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a href="/" class="home-link">Mudit Gupta</a>
+      <div class="topbar-actions">
+        <a href="/articles.html" class="btn btn-outline">Articles</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <article class="article-content">
+      <p class="kicker">DBMS Series | Part 011</p>
+      <h1>Database Security: Protecting Data at Every Layer</h1>
+      <p class="meta">Security & Compliance | 11 min read</p>
+
+      <h2>Why Database Security Matters</h2>
+      <p>
+        Databases often contain sensitive data — personal information, financial records, trade secrets. A breach can result in financial loss, legal liability, reputational damage, and loss of customer trust.
+      </p>
+      <p>
+        <strong>Security Must Address:</strong>
+      </p>
+      <ul>
+        <li><strong>Confidentiality:</strong> Data visible only to authorized users</li>
+        <li><strong>Integrity:</strong> Data remains accurate and unchanged by unauthorized parties</li>
+        <li><strong>Availability:</strong> Authorized users can access data when needed</li>
+      </ul>
+
+      <h2>Authentication</h2>
+      <p>
+        Authentication verifies the identity of users before granting access.
+      </p>
+      <p>
+        <strong>Methods:</strong>
+      </p>
+      <ul>
+        <li><strong>Username/Password:</strong> Most common, should be hashed and salted</li>
+        <li><strong>Multi-Factor Authentication (MFA):</strong> Requires additional verification (OTP, biometrics)</li>
+        <li><strong>OAuth/LDAP:</strong> Centralized authentication through external providers</li>
+        <li><strong>Certificate-Based:</strong> X.509 certificates for secure connections</li>
+      </ul>
+
+      <h3>Strong Password Policies</h3>
+      <div class="code-block">
+<pre>-- Requirements for strong passwords
+- Minimum 12 characters
+- Mix of uppercase, lowercase, numbers, symbols
+- No dictionary words or personal information
+- Regular password changes (e.g., 90 days)
+- Password history (prevent reuse)</pre>
+      </div>
+
+      <h2>Authorization & Access Control</h2>
+      <p>
+        Authorization determines what authenticated users can do. The principle of least privilege (PoLP) ensures users get only the minimum necessary access.
+      </p>
+
+      <h3>Role-Based Access Control (RBAC)</h3>
+      <div class="code-block">
+<pre>-- Define roles with specific permissions
+CREATE ROLE admin;
+CREATE ROLE analyst;
+CREATE ROLE viewer;
+
+-- Grant permissions to roles
+GRANT SELECT, INSERT, UPDATE, DELETE ON database.* TO admin;
+GRANT SELECT ON database.* TO analyst;
+GRANT SELECT ON reports.* TO viewer;
+
+-- Assign roles to users
+GRANT admin TO user1;
+GRANT analyst TO user2;
+GRANT viewer TO user3;</pre>
+      </div>
+
+      <h3>Attribute-Based Access Control (ABAC)</h3>
+      <p>
+        Grants access based on user attributes, resource attributes, and environmental conditions.
+      </p>
+      <div class="code-block">
+<pre>-- Grant select on employees table only to HR department users during business hours
+IF (user.department = 'HR' AND time BETWEEN '9:00' AND '17:00')
+  ALLOW SELECT ON Employees</pre>
+      </div>
+
+      <h2>Column-Level Security</h2>
+      <p>
+        Hide sensitive columns from unauthorized users. A customer service representative sees names but not credit card numbers.
+      </p>
+      <div class="code-block">
+<pre>-- Create a view that hides credit card numbers
+CREATE VIEW SafeCustomers AS
+SELECT customer_id, name, email, phone
+FROM Customers;
+
+GRANT SELECT ON SafeCustomers TO customer_service_role;</pre>
+      </div>
+
+      <h2>Row-Level Security (RLS)</h2>
+      <p>
+        Control row access based on user attributes. A sales manager sees only their team's data.
+      </p>
+      <div class="code-block">
+<pre>-- SQL Server example
+CREATE SECURITY POLICY SalesRLS
+ADD FILTER PREDICATE dbo.fn_securitypredicate(user_id)
+ON dbo.Sales
+WITH (STATE = ON);</pre>
+      </div>
+
+      <h2>Encryption</h2>
+
+      <h3>Data at Rest</h3>
+      <p>
+        Encrypt data stored on disk. Even if someone gains physical access to storage devices, data remains unreadable.
+      </p>
+      <div class="code-block">
+<pre>-- Transparent Data Encryption (TDE) in SQL Server
+ALTER DATABASE MyDatabase SET ENCRYPTION ON;</pre>
+      </div>
+
+      <h3>Data in Transit</h3>
+      <p>
+        Encrypt data traveling between client and database server using TLS/SSL.
+      </p>
+      <div class="code-block">
+<pre>-- Connect to MySQL with SSL
+mysql -h server.com -u user -p --ssl-mode=REQUIRED</pre>
+      </div>
+
+      <h3>Data in Use</h3>
+      <p>
+        Encrypt sensitive data (PII, credit cards) at the application level before storing.
+      </p>
+      <div class="code-block">
+<pre>-- Encrypt before storing
+CREATE TABLE Customers (
+  customer_id INT,
+  name VARCHAR(100),
+  ssn VARBINARY(255), -- Encrypted SSN
+  encrypted_at TIMESTAMP
+);
+
+-- Application encrypts SSN before INSERT/UPDATE</pre>
+      </div>
+
+      <h2>SQL Injection Prevention</h2>
+      <p>
+        SQL injection is a common attack where malicious SQL code is executed through user input.
+      </p>
+      <p>
+        <strong>Vulnerable Code:</strong>
+      </p>
+      <div class="code-block">
+<pre>-- DO NOT DO THIS
+$user_id = $_GET['id'];
+$query = "SELECT * FROM users WHERE id = " . $user_id;
+// Attacker can pass: 1' OR '1'='1</pre>
+      </div>
+
+      <p>
+        <strong>Secure Approach: Parameterized Queries</strong>
+      </p>
+      <div class="code-block">
+<pre>-- Use prepared statements
+$stmt = $conn->prepare("SELECT * FROM users WHERE id = ?");
+$stmt->bind_param("i", $user_id);
+$stmt->execute();</pre>
+      </div>
+
+      <h2>Audit Logging</h2>
+      <p>
+        Log all database activities to detect and investigate unauthorized access.
+      </p>
+      <div class="code-block">
+<pre>-- Enable audit logging (SQL Server)
+CREATE SERVER AUDIT AuditLog
+TO FILE (FILEPATH = 'C:\Audit\')
+WITH (QUEUE_DELAY = 1000, ON_FAILURE = CONTINUE);
+
+-- Audit successful logins and data access
+CREATE DATABASE AUDIT SPECIFICATION AuditDataAccess
+FOR SERVER AUDIT AuditLog
+ADD (SELECT, DELETE, UPDATE ON DATABASE::MyDatabase BY PUBLIC);</pre>
+      </div>
+
+      <h2>Backup & Disaster Recovery</h2>
+      <p>
+        Regular encrypted backups ensure data can be restored after incidents like ransomware attacks or hardware failures.
+      </p>
+      <div class="code-block">
+<pre>-- Regular backup schedule
+BACKUP DATABASE MyDatabase
+TO DISK = 'C:\Backups\MyDatabase_full.bak'
+WITH ENCRYPTION (ALGORITHM = AES_256,
+  SERVER CERTIFICATE = MasterKey);</pre>
+      </div>
+
+      <h2>Network Security</h2>
+      <ul>
+        <li><strong>Firewall:</strong> Restrict database ports (default 3306 for MySQL) to trusted IP ranges</li>
+        <li><strong>VPN:</strong> Connect to databases through secure tunnels</li>
+        <li><strong>Disable External Access:</strong> Don't expose databases directly to internet</li>
+        <li><strong>Network Segmentation:</strong> Separate database servers in isolated networks</li>
+      </ul>
+
+      <h2>Compliance Standards</h2>
+      <p>
+        <strong>GDPR (General Data Protection Regulation):</strong> EU regulation protecting personal data. Requires consent, encryption, right to deletion (right to be forgotten).
+      </p>
+      <p>
+        <strong>HIPAA (Health Insurance Portability and Accountability Act):</strong> Protects healthcare data in the US.
+      </p>
+      <p>
+        <strong>PCI DSS (Payment Card Industry Data Security Standard):</strong> Protects credit card data.
+      </p>
+      <p>
+        <strong>SOC 2 (Service Organization Control):</strong> Audit standard for service providers.
+      </p>
+
+      <h2>Security Best Practices Summary</h2>
+      <ul>
+        <li>Change default credentials immediately</li>
+        <li>Keep DBMS updated with security patches</li>
+        <li>Use strong authentication and authorization</li>
+        <li>Encrypt sensitive data (at rest, in transit, in use)</li>
+        <li>Use parameterized queries to prevent SQL injection</li>
+        <li>Enable audit logging for compliance</li>
+        <li>Implement principle of least privilege</li>
+        <li>Regular security testing and penetration testing</li>
+        <li>Regular encrypted backups with off-site copies</li>
+        <li>Monitor database for suspicious activity</li>
+      </ul>
+
+      <h2>Conclusion</h2>
+      <p>
+        Database security is not a one-time implementation but an ongoing process. By implementing layered security controls, enforcing compliance standards, and maintaining vigilant monitoring, you can significantly reduce the risk of data breaches and protect sensitive information.
+      </p>
+      <p>
+        This concludes our comprehensive DBMS series covering fundamentals, design, querying, optimization, and security. With this knowledge, you're equipped to design, implement, and maintain secure, scalable databases for modern applications.
+      </p>
+    </article>
+  </main>
+
+  <footer style="text-align: center; padding: 2rem; color: #666; border-top: 1px solid #eee; margin-top: 3rem;">
+    <p>&copy; 2024 Mudit Gupta. All rights reserved.</p>
+  </footer>
+</body>
+</html>

@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>Views & Indexing | Mudit Gupta</title>
+  <meta name="description" content="Database Views, Index types, strategies, and performance tuning." />
+  <link rel="stylesheet" href="/assets/css/articles.css" />
+  <style>
+    .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
+    .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; color: #1a1a1a; }
+    .article-content p { margin-bottom: 1rem; color: #333; }
+    .article-content ul, .article-content ol { margin-left: 2rem; margin-bottom: 1rem; }
+    .article-content li { margin-bottom: 0.5rem; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a href="/" class="home-link">Mudit Gupta</a>
+      <div class="topbar-actions">
+        <a href="/articles.html" class="btn btn-outline">Articles</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <article class="article-content">
+      <p class="kicker">DBMS Series | Part 009</p>
+      <h1>Views & Indexing: Abstraction and Performance</h1>
+      <p class="meta">Database Design & Performance | 9 min read</p>
+
+      <h2>Database Views</h2>
+      <p>
+        A view is a virtual table created from a query result. It doesn't store data itself but displays data from underlying base tables. Views provide abstraction, security, and simplified data access.
+      </p>
+
+      <h2>Types of Views</h2>
+
+      <h3>Simple View</h3>
+      <p>
+        Created from a single table without aggregation or joins.
+      </p>
+      <div class="code-block">
+<pre>CREATE VIEW ActiveStudents AS
+SELECT student_id, name, email, enrollment_date
+FROM Students
+WHERE status = 'active';</pre>
+      </div>
+
+      <h3>Complex View</h3>
+      <p>
+        Created from multiple tables using joins, aggregations, or subqueries.
+      </p>
+      <div class="code-block">
+<pre>CREATE VIEW StudentCourseStats AS
+SELECT 
+  s.student_id,
+  s.name,
+  COUNT(e.course_id) as courses_enrolled,
+  AVG(e.grade) as average_grade
+FROM Students s
+LEFT JOIN Enrollments e ON s.student_id = e.student_id
+GROUP BY s.student_id, s.name;</pre>
+      </div>
+
+      <h3>Indexed View (Materialized View)</h3>
+      <p>
+        A view with an index that physically stores data. Used for frequently accessed complex queries.
+      </p>
+      <div class="code-block">
+<pre>CREATE VIEW StudentCourseSummary AS
+SELECT 
+  s.student_id,
+  s.name,
+  COUNT(e.course_id) as total_courses
+FROM Students s
+LEFT JOIN Enrollments e ON s.student_id = e.student_id
+GROUP BY s.student_id, s.name;
+
+-- Create index on view (SQL Server/PostgreSQL)
+CREATE INDEX idx_studentcoursesummary 
+ON StudentCourseSummary(student_id);</pre>
+      </div>
+
+      <h2>Advantages of Views</h2>
+      <ul>
+        <li><strong>Abstraction:</strong> Hide database complexity from users</li>
+        <li><strong>Security:</strong> Show only relevant columns/rows to users</li>
+        <li><strong>Simplification:</strong> Pre-join tables for common queries</li>
+        <li><strong>Maintainability:</strong> Update the view when underlying schema changes</li>
+        <li><strong>Consistency:</strong> Multiple applications use the same business logic</li>
+      </ul>
+
+      <h2>Disadvantages of Views</h2>
+      <ul>
+        <li><strong>Performance:</strong> Complex views with joins can be slow</li>
+        <li><strong>Update Limitations:</strong> Some views cannot be updated directly</li>
+        <li><strong>Maintenance:</strong> Changes to base tables affect dependent views</li>
+      </ul>
+
+      <h2>Updatable Views</h2>
+      <p>
+        Simple views can be updated (INSERT, UPDATE, DELETE) if they meet certain conditions. Complex views with joins or aggregations are typically read-only.
+      </p>
+      <div class="code-block">
+<pre>-- Updatable view (simple, single table)
+UPDATE ActiveStudents 
+SET email = 'newemail@example.com' 
+WHERE student_id = 5;</pre>
+      </div>
+
+      <h2>Dropping Views</h2>
+      <div class="code-block">
+<pre>DROP VIEW StudentCourseStats;
+DROP VIEW IF EXISTS StudentCourseStats; -- Safe drop</pre>
+      </div>
+
+      <h2>Indexing Deep Dive</h2>
+      <p>
+        An index is an on-disk data structure that speeds up data retrieval. It maps values to row locations, allowing the DBMS to find data without scanning all rows.
+      </p>
+
+      <h2>Hash Index</h2>
+      <p>
+        Uses a hash function to distribute values. Excellent for equality searches but doesn't support range queries.
+      </p>
+      <div class="code-block">
+<pre>CREATE INDEX idx_email_hash ON Students USING HASH (email);</pre>
+      </div>
+
+      <h2>B-Tree Index</h2>
+      <p>
+        Balanced tree structure — the most common index type. Supports both equality and range queries. Self-balancing ensures logarithmic search time.
+      </p>
+      <div class="code-block">
+<pre>CREATE INDEX idx_age ON Students (age);
+SELECT * FROM Students WHERE age BETWEEN 20 AND 25; -- Uses index</pre>
+      </div>
+
+      <h2>Bitmap Index</h2>
+      <p>
+        Uses bit vectors (0s and 1s) to represent data. Efficient for columns with low cardinality (few distinct values).
+      </p>
+      <div class="code-block">
+<pre>CREATE BITMAP INDEX idx_status ON Students (status);
+-- Good for status='active' or status='inactive'</pre>
+      </div>
+
+      <h2>Full-Text Index</h2>
+      <p>
+        Optimized for full-text search on document or text columns.
+      </p>
+      <div class="code-block">
+<pre>CREATE FULLTEXT INDEX idx_article_content 
+ON Articles (content);
+
+SELECT * FROM Articles 
+WHERE MATCH(content) AGAINST('database' IN BOOLEAN MODE);</pre>
+      </div>
+
+      <h2>Composite Index Strategy</h2>
+      <p>
+        Multi-column indexes optimize queries that filter on multiple columns. Order matters!
+      </p>
+      <div class="code-block">
+<pre>-- Create composite index with good selectivity first
+CREATE INDEX idx_dept_salary ON Employees(department_id, salary);
+
+-- This query can use the composite index efficiently
+SELECT * FROM Employees 
+WHERE department_id = 5 AND salary > 50000;</pre>
+      </div>
+
+      <h2>Index Maintenance</h2>
+      <p>
+        Indexes must be maintained as data changes (INSERT, UPDATE, DELETE). This has performance overhead.
+      </p>
+      <ul>
+        <li><strong>Rebuild Index:</strong> Reorganizes entire index for optimal performance</li>
+        <li><strong>Defrag Index:</strong> Consolidates fragmented index pages</li>
+      </ul>
+      <div class="code-block">
+<pre>-- MySQL
+OPTIMIZE TABLE Students;
+
+-- PostgreSQL
+REINDEX INDEX idx_age;
+
+-- SQL Server
+ALTER INDEX idx_age ON Students REBUILD;</pre>
+      </div>
+
+      <h2>Index Best Practices</h2>
+      <ul>
+        <li>Index columns used in WHERE, JOIN, and ORDER BY clauses</li>
+        <li>Don't index low-cardinality columns (e.g., gender with only 2 values)</li>
+        <li>Avoid indexing columns updated frequently</li>
+        <li>Regular index maintenance for large tables</li>
+        <li>Monitor index usage; remove unused indexes</li>
+        <li>Balance between read performance (more indexes) and write performance (fewer indexes)</li>
+      </ul>
+
+      <h2>Summary</h2>
+      <p>
+        Views provide logical abstraction and security, while indexes dramatically improve query performance. Understanding when and how to use both is essential for designing databases that are secure, maintainable, and performant. Views hide complexity; indexes accelerate complexity.
+      </p>
+      <p>
+        In the next article, we'll explore NoSQL databases, an alternative approach to data storage for non-relational scenarios.
+      </p>
+    </article>
+  </main>
+
+  <footer style="text-align: center; padding: 2rem; color: #666; border-top: 1px solid #eee; margin-top: 3rem;">
+    <p>&copy; 2024 Mudit Gupta. All rights reserved.</p>
+  </footer>
+</body>
+</html>

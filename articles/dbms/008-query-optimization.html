@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>Query Optimization | Mudit Gupta</title>
+  <meta name="description" content="Query optimization techniques, indexing strategies, and execution plans." />
+  <link rel="stylesheet" href="/assets/css/articles.css" />
+  <style>
+    .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
+    .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; color: #1a1a1a; }
+    .article-content p { margin-bottom: 1rem; color: #333; }
+    .article-content ul, .article-content ol { margin-left: 2rem; margin-bottom: 1rem; }
+    .article-content li { margin-bottom: 0.5rem; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a href="/" class="home-link">Mudit Gupta</a>
+      <div class="topbar-actions">
+        <a href="/articles.html" class="btn btn-outline">Articles</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <article class="article-content">
+      <p class="kicker">DBMS Series | Part 008</p>
+      <h1>Query Optimization: Making Queries Fast & Efficient</h1>
+      <p class="meta">Performance & Optimization | 10 min read</p>
+
+      <h2>What is Query Optimization?</h2>
+      <p>
+        Query optimization is the process of improving SQL query performance by minimizing resource consumption (CPU, memory, disk I/O) and execution time. The DBMS query optimizer automatically evaluates different execution plans and chooses the most efficient one.
+      </p>
+      <p>
+        <strong>Goal:</strong> Retrieve required data with minimum computational resources.
+      </p>
+
+      <h2>Query Processing Steps</h2>
+      <ol>
+        <li><strong>Parsing:</strong> Check SQL syntax validity</li>
+        <li><strong>Translation:</strong> Convert SQL to internal representation</li>
+        <li><strong>Optimization:</strong> Generate optimal execution plan</li>
+        <li><strong>Compilation:</strong> Convert to executable code</li>
+        <li><strong>Execution:</strong> Execute the compiled plan</li>
+      </ol>
+
+      <h2>Understanding Execution Plans</h2>
+      <p>
+        An execution plan shows how the DBMS executes a query. It reveals the operations, join methods, and order of data access.
+      </p>
+      <p>
+        <strong>View Execution Plan:</strong>
+      </p>
+      <div class="code-block">
+<pre>-- MySQL
+EXPLAIN SELECT * FROM Students WHERE age > 20;
+EXPLAIN FORMAT=JSON SELECT ...;
+
+-- PostgreSQL
+EXPLAIN SELECT * FROM Students WHERE age > 20;
+EXPLAIN ANALYZE SELECT *;</pre>
+      </div>
+
+      <h2>Indexing Strategy</h2>
+      <p>
+        An index is a data structure that enables fast data retrieval, similar to a book's index. Without indexes, the DBMS performs full table scans.
+      </p>
+
+      <h3>Types of Indexes</h3>
+      <p>
+        <strong>Single-Column Index:</strong> Index on a single column.
+      </p>
+      <div class="code-block">
+<pre>CREATE INDEX idx_name ON Students(name);
+CREATE INDEX idx_email ON Students(email);</pre>
+      </div>
+
+      <p>
+        <strong>Composite (Multi-Column) Index:</strong> Index on multiple columns.
+      </p>
+      <div class="code-block">
+<pre>CREATE INDEX idx_dept_salary ON Employees(department_id, salary);</pre>
+      </div>
+
+      <p>
+        <strong>Unique Index:</strong> Enforces uniqueness.
+      </p>
+      <div class="code-block">
+<pre>CREATE UNIQUE INDEX idx_email ON Students(email);</pre>
+      </div>
+
+      <p>
+        <strong>Full-Text Index:</strong> For text search.
+      </p>
+      <div class="code-block">
+<pre>CREATE FULLTEXT INDEX idx_content ON Articles(content);</pre>
+      </div>
+
+      <h3>When to Create Indexes</h3>
+      <ul>
+        <li><strong>WHERE Clause:</strong> Frequently filtered columns</li>
+        <li><strong>JOIN Conditions:</strong> Columns used in JOIN ON</li>
+        <li><strong>ORDER BY/GROUP BY:</strong> Sorted or grouped columns</li>
+        <li><strong>Foreign Keys:</strong> Improve JOIN performance</li>
+      </ul>
+
+      <h3>When NOT to Index</h3>
+      <ul>
+        <li>Small tables (less than 1000 rows)</li>
+        <li>Columns with low selectivity (few unique values)</li>
+        <li>Columns updated frequently (maintenance overhead)</li>
+        <li>Columns rarely used in WHERE/JOIN</li>
+      </ul>
+
+      <h2>Query Optimization Techniques</h2>
+
+      <h3>1. Use Selective Columns</h3>
+      <p>
+        <strong>Avoid:</strong>
+      </p>
+      <div class="code-block">
+<pre>SELECT * FROM Students;</pre>
+      </div>
+      <p>
+        <strong>Prefer:</strong>
+      </p>
+      <div class="code-block">
+<pre>SELECT student_id, name, email FROM Students;</pre>
+      </div>
+
+      <h3>2. Add WHERE Clause Conditions</h3>
+      <p>
+        Reduce rows early to minimize processing.
+      </p>
+      <div class="code-block">
+<pre>-- Better: Filters early
+SELECT * FROM Students 
+WHERE department_id = 5 AND age > 20;
+
+-- Worse: No filtering
+SELECT * FROM Students</pre>
+      </div>
+
+      <h3>3. Use INNER JOIN Instead of Outer Joins</h3>
+      <p>
+        INNER joins are faster because they process fewer rows.
+      </p>
+      <div class="code-block">
+<pre>-- Prefer INNER when you need matching rows only
+SELECT s.name, c.course_name
+FROM Students s
+INNER JOIN Enrollments e ON s.student_id = e.student_id
+INNER JOIN Courses c ON e.course_id = c.course_id;</pre>
+      </div>
+
+      <h3>4. Avoid Functions in WHERE Clause</h3>
+      <p>
+        <strong>Avoid:</strong> Functions prevent using indexes.
+      </p>
+      <div class="code-block">
+<pre>SELECT * FROM Students 
+WHERE UPPER(name) = 'JOHN'; -- Can't use index</pre>
+      </div>
+      <p>
+        <strong>Prefer:</strong>
+      </p>
+      <div class="code-block">
+<pre>SELECT * FROM Students 
+WHERE name = 'John'; -- Can use index</pre>
+      </div>
+
+      <h3>5. Use EXISTS Instead of IN for Subqueries</h3>
+      <p>
+        <strong>Better Performance:</strong>
+      </p>
+      <div class="code-block">
+<pre>SELECT * FROM Students s
+WHERE EXISTS (
+  SELECT 1 FROM Enrollments 
+  WHERE student_id = s.student_id
+);</pre>
+      </div>
+
+      <h3>6. Parameterize Queries</h3>
+      <p>
+        Use prepared statements to prevent SQL injection and enable query caching.
+      </p>
+      <div class="code-block">
+<pre>-- Prepared statement (pseudo-code)
+PREPARE stmt FROM 'SELECT * FROM Students WHERE student_id = ?'
+EXECUTE stmt USING 5;</pre>
+      </div>
+
+      <h3>7. Limit Result Set</h3>
+      <div class="code-block">
+<pre>SELECT * FROM Students LIMIT 10;</pre>
+      </div>
+
+      <h3>8. Use Denormalization for Read-Heavy Queries</h3>
+      <p>
+        Intentionally store redundant data for frequently accessed aggregates.
+      </p>
+      <div class="code-block">
+<pre>-- Add order_total to Orders table even though it can be calculated
+ALTER TABLE Orders ADD order_total DECIMAL(10,2);</pre>
+      </div>
+
+      <h2>Batch Operations</h2>
+      <p>
+        Insert/update multiple rows at once instead of individual statements.
+      </p>
+      <div class="code-block">
+<pre>-- Better: Batch insert
+INSERT INTO Students (name, email) VALUES
+('John', 'john@ex.com'),
+('Jane', 'jane@ex.com'),
+('Bob', 'bob@ex.com');
+
+-- Avoid: Individual inserts in a loop</pre>
+      </div>
+
+      <h2>Database Statistics</h2>
+      <p>
+        Database maintainers should regularly update statistics so the optimizer makes good decisions.
+      </p>
+      <div class="code-block">
+<pre>-- MySQL
+ANALYZE TABLE Students;
+
+-- PostgreSQL
+ANALYZE;</pre>
+      </div>
+
+      <h2>Summary</h2>
+      <p>
+        Query optimization is a critical skill for database performance. By understanding execution plans, using appropriate indexes, writing selective queries, and avoiding common pitfalls, you can dramatically improve application responsiveness. Regular monitoring and tuning ensure databases remain performant as data grows.
+      </p>
+      <p>
+        In the next article, we'll explore Views and Indexes in more detail, and how they improve both performance and maintainability.
+      </p>
+    </article>
+  </main>
+
+  <footer style="text-align: center; padding: 2rem; color: #666; border-top: 1px solid #eee; margin-top: 3rem;">
+    <p>&copy; 2024 Mudit Gupta. All rights reserved.</p>
+  </footer>
+</body>
+</html>
