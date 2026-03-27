@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>In-Memory Databases: Redis Data Structures, Eviction and Persistence | Mudit Gupta</title>
+  <meta name="description" content="Redis data structures, TTL patterns, eviction policies, LRU vs LFU, persistence modes (RDB, AOF), pub/sub, Lua scripting, and Redis use cases at scale." />
+  <link rel="stylesheet" href="/assets/css/articles.css" />
+  <style>
+    .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
+    .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; color: #1a1a1a; }
+    .article-content h3 { margin-top: 1.5rem; margin-bottom: 0.75rem; color: #1a1a1a; }
+    .article-content p { margin-bottom: 1rem; color: #333; }
+    .article-content ul, .article-content ol { margin-left: 2rem; margin-bottom: 1rem; }
+    .article-content li { margin-bottom: 0.5rem; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; white-space: pre; margin-bottom: 1rem; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    table th, table td { border: 1px solid #ddd; padding: 0.75rem; text-align: left; }
+    table th { background: #f0f0f0; font-weight: 600; }
+    .note-box { background: #fff8e1; border-left: 4px solid #f9a825; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .tip-box { background: #e8f5e9; border-left: 4px solid #43a047; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .danger-box { background: #ffebee; border-left: 4px solid #e53935; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a href="/" class="home-link">Mudit Gupta</a>
+      <div class="topbar-actions">
+        <a href="/articles.html" class="btn btn-outline">Articles</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <article class="article-content">
+      <p class="kicker">DBMS Series | Part 025</p>
+      <h1>In-Memory Databases: Redis Data Structures, Eviction and Persistence</h1>
+      <p class="meta">NoSQL &amp; Caching | 27 min read</p>
+
+      <p>
+        Redis is the world's most widely used in-memory data structure server. Unlike a simple
+        key-value cache, Redis offers rich data types, atomic operations, Lua scripting, and
+        configurable persistence — making it suitable for caching, session storage, rate limiting,
+        leaderboards, message queues, and real-time analytics simultaneously.
+      </p>
+
+      <h2>Core Data Structures</h2>
+      <h3>String</h3>
+      <div class="code-block">-- Most versatile type: stores text, integers, serialized JSON, binary blobs
+-- Max size: 512 MB
+
+SET user:1001:name "Priya Sharma"
+GET user:1001:name         -- "Priya Sharma"
+
+-- Integer string: atomic increment/decrement
+SET page_views 0
+INCR page_views            -- 1 (atomic, no race condition)
+INCRBY page_views 10       -- 11
+DECR page_views            -- 10
+
+-- TTL: expire after 3600 seconds
+SET session:abc123 "user_data_json" EX 3600
+TTL session:abc123         -- 3599 (seconds remaining)
+PERSIST session:abc123     -- remove the TTL (make permanent)
+
+-- Set-if-not-exists (atomic, good for distributed locks):
+SET lock:resource_123 "holder_id" NX EX 30
+-- NX = only set if key does NOT exist
+-- EX 30 = expire in 30 seconds (auto-release on crash)</div>
+
+      <h3>Hash</h3>
+      <div class="code-block">-- Hash: field-value map. Like a JSON object but with atomic field operations
+-- Perfect for storing object/entity data
+
+HSET customer:1001 name "Priya" city "Mumbai" tier "gold" total_orders 42
+HGET customer:1001 tier           -- "gold"
+HMGET customer:1001 name city     -- ["Priya", "Mumbai"]
+HGETALL customer:1001             -- {name: "Priya", city: "Mumbai", tier: "gold", ...}
+
+-- Increment a numeric field atomically:
+HINCRBY customer:1001 total_orders 1    -- 43
+
+-- Check/delete individual fields:
+HEXISTS customer:1001 email       -- 0 (false)
+HDEL customer:1001 old_field
+
+-- Memory: small hashes (< 128 fields, values < 64 bytes) use ziplist encoding
+-- → very compact in memory; good for caching many small objects</div>
+
+      <h3>List</h3>
+      <div class="code-block">-- Doubly-linked list. Fast head/tail operations; slow random access.
+-- Use cases: message queues, activity feeds, recent items
+
+LPUSH recent_searches:user1001 "wireless keyboard"  -- push to left (head)
+LPUSH recent_searches:user1001 "mechanical mouse"
+LRANGE recent_searches:user1001 0 9   -- get first 10 items
+LTRIM  recent_searches:user1001 0 19  -- keep only last 20
+
+-- Queue pattern (FIFO — producer pushes left, consumer pops right):
+LPUSH queue:email_send "job_payload_json"   -- enqueue
+BRPOP queue:email_send 30                  -- blocking pop (waits up to 30s for item)
+-- BRPOP is used by worker processes that wait for new jobs
+
+-- Stack pattern (LIFO):
+LPUSH undo_stack:session123 "action_json"  -- push
+LPOP  undo_stack:session123                -- pop from same end</div>
+
+      <h3>Set</h3>
+      <div class="code-block">-- Unordered collection of unique strings
+-- Use cases: tags, unique visitors, permissions, social connections
+
+SADD product:101:tags "wireless" "keyboard" "electronics"
+SMEMBERS product:101:tags                -- {"wireless", "keyboard", "electronics"}
+SISMEMBER product:101:tags "wireless"    -- 1 (true)
+
+-- Set operations (very fast, O(N)):
+SINTER user:1001:friends user:1002:friends   -- mutual friends
+SUNION user:1001:interests user:1002:interests -- combined interests
+SDIFF  user:1001:friends user:1002:friends    -- friends only user1001 has
+
+-- HyperLogLog: approximate unique count (very memory-efficient, ~12KB per key)
+PFADD unique_visitors:2024-01-15 "ip_1" "ip_2" "ip_3"
+PFCOUNT unique_visitors:2024-01-15   -- ~3 (< 1% error rate)
+-- Use for "DAU" style metrics without storing millions of user IDs</div>
+
+      <h3>Sorted Set (ZSet)</h3>
+      <div class="code-block">-- Set where each member has a floating-point score. Members are unique;
+-- scores can repeat. Members stored sorted by score.
+-- Use cases: leaderboards, priority queues, time-series indexes
+
+-- Game leaderboard:
+ZADD leaderboard:game_001 9450.0 "player_priya"
+ZADD leaderboard:game_001 8320.0 "player_raj"
+ZADD leaderboard:game_001 9820.0 "player_sam"
+
+-- Top 10 players (highest scores first):
+ZREVRANGE leaderboard:game_001 0 9 WITHSCORES
+-- Returns: [player_sam 9820, player_priya 9450, player_raj 8320, ...]
+
+-- Rank of a specific player:
+ZREVRANK leaderboard:game_001 "player_priya"   -- 1 (0-based, so rank #2)
+
+-- Players with score in range:
+ZRANGEBYSCORE leaderboard:game_001 8000 9000 WITHSCORES
+
+-- Rate limiting with sorted set (sliding window):
+-- Key: ratelimit:user:1001
+-- Members: request timestamps, Score: timestamp
+ZADD ratelimit:user:1001 1704067200.123 "req_uuid_1"
+ZREMRANGEBYSCORE ratelimit:user:1001 0 (NOW - 60)   -- remove older than 60s
+ZCARD ratelimit:user:1001   -- count requests in last 60s; reject if > limit</div>
+
+      <h3>Stream</h3>
+      <div class="code-block">-- Redis 5.0+: append-only log with consumer groups (like Kafka)
+-- Use case: event sourcing, audit logs, message queues
+
+XADD events:orders * customer_id 1001 action "purchase" total 299.00
+-- * = auto-generate ID (timestamp-based)
+
+-- Consumer group: for distributing work across workers
+XGROUP CREATE events:orders workers $ MKSTREAM
+XREADGROUP GROUP workers worker_1 COUNT 10 STREAMS events:orders >
+-- > = read messages not yet delivered to this group
+
+-- Acknowledge processed messages:
+XACK events:orders workers message_id_1 message_id_2
+-- Unacknowledged messages are "pending" — can re-deliver to another worker on failure</div>
+
+      <h2>Eviction Policies</h2>
+      <p>
+        When Redis reaches its <code>maxmemory</code> limit, it must either reject new writes or
+        evict existing keys. The policy you choose dramatically impacts which data gets evicted.
+      </p>
+      <table>
+        <tr><th>Policy</th><th>Evicts</th><th>Use Case</th></tr>
+        <tr><td>noeviction (default)</td><td>Nothing — writes return errors</td><td>Dangerous; only for persistence-only use</td></tr>
+        <tr><td>allkeys-lru</td><td>Least Recently Used across all keys</td><td>General-purpose cache</td></tr>
+        <tr><td>allkeys-lfu</td><td>Least Frequently Used across all keys</td><td>Skewed access (hot/cold data)</td></tr>
+        <tr><td>volatile-lru</td><td>LRU among keys with TTL set</td><td>Mix of volatile cache + persistent data</td></tr>
+        <tr><td>volatile-lfu</td><td>LFU among keys with TTL set</td><td>Same, frequency-weighted</td></tr>
+        <tr><td>allkeys-random</td><td>Random key</td><td>Uniform access pattern (rare)</td></tr>
+        <tr><td>volatile-ttl</td><td>Key with earliest expiry</td><td>Cache where TTL reflects importance</td></tr>
+      </table>
+      <div class="code-block">-- Set memory limit and eviction policy in redis.conf:
+maxmemory 2gb
+maxmemory-policy allkeys-lfu
+
+-- LFU vs LRU:
+-- LRU: evicts items not accessed recently — good for temporal locality
+-- LFU: evicts items accessed infrequently — better when hot keys are stable
+-- Example: if a viral post is accessed 1M times/day and then goes quiet,
+--   LFU will keep it longer (high frequency) even when recently less accessed</div>
+
+      <h2>Persistence Modes</h2>
+      <div class="code-block">-- RDB (Redis Database): point-in-time snapshot
+-- redis.conf: save 900 1 (save every 900s if at least 1 key changed)
+--             save 300 10
+--             save 60 10000
+-- Compact binary format; fast to load on restart
+-- Trade-off: if Redis crashes between snapshots, data since last snapshot is lost
+CONFIG SET save "900 1 300 10 60 10000"
+
+-- AOF (Append-Only File): log every write command
+appendonly yes
+appendfsync everysec     -- fsync to disk every second
+--           always      -- fsync every write (safest, but slow)
+--           no          -- OS decides when to flush (fastest, less safe)
+-- Trade-off: AOF file is larger; startup is slower (replay all commands)
+-- Recovery: at most 1 second of data lost (with everysec)
+
+-- RDB + AOF hybrid (recommended for production):
+aof-use-rdb-preamble yes
+-- On restart: load from RDB snapshot first, then replay AOF from that point
+-- Faster than pure AOF startup, with better durability than pure RDB
+
+-- No persistence (pure cache):
+appendonly no
+save ""    -- disable all RDB saves
+-- All data lost on restart; appropriate when Redis is a pure cache layer</div>
+
+      <h2>Atomic Operations and Lua Scripting</h2>
+      <div class="code-block">-- Redis is single-threaded for commands: no concurrent command conflicts
+-- But multi-step operations need atomic execution → use Lua scripts or MULTI/EXEC
+
+-- MULTI/EXEC (transactions): queue commands, execute atomically
+MULTI
+HSET cart:user1001 item:101 2     -- set quantity 2 for product 101
+HINCRBY cart:user1001 total 499   -- increment total price
+EXPIRE cart:user1001 3600         -- reset TTL
+EXEC
+-- All three execute atomically — no interleaving
+
+-- WATCH/MULTI/EXEC (optimistic concurrency):
+WATCH cart:user1001             -- watch for changes
+val = GET cart:user1001         -- read current state
+MULTI
+SET cart:user1001 newval        -- attempt update
+result = EXEC
+-- If cart:user1001 changed between WATCH and EXEC, EXEC returns nil → retry
+
+-- Lua script (fully atomic, reusable):
+EVAL "
+  local current = redis.call('GET', KEYS[1])
+  if tonumber(current) >= tonumber(ARGV[1]) then
+    redis.call('DECRBY', KEYS[1], ARGV[1])
+    return 1  -- success
+  end
+  return 0    -- insufficient funds
+" 1 wallet:user1001 100
+-- Atomically: check balance >= 100, then deduct 100
+-- No race condition possible</div>
+
+      <h2>Pub/Sub</h2>
+      <div class="code-block">-- Publish-subscribe: publishers send messages to channels; subscribers receive them
+-- Messages are NOT stored — fire-and-forget (use Streams for durability)
+
+-- Subscriber (connection 1):
+SUBSCRIBE notifications:user:1001 notifications:system
+
+-- Publisher (connection 2):
+PUBLISH notifications:user:1001 "{\"type\":\"order_shipped\",\"order_id\":456}"
+
+-- Pattern subscribe (wildcard):
+PSUBSCRIBE notifications:user:*    -- subscribes to all user notifications
+-- Subscriber receives: {channel, pattern, message} tuples
+
+-- Use cases: real-time chat, live notifications, invalidation events for cache</div>
+
+      <div class="danger-box">
+        <strong>Redis Pub/Sub limitation:</strong> Messages are not persisted. If a subscriber
+        goes offline, it misses all messages published while disconnected. For reliable
+        message delivery, use Redis Streams (XADD/XREADGROUP) or a dedicated message broker.
+      </div>
+
+      <h2>Redis Cluster for Horizontal Scaling</h2>
+      <div class="code-block">-- Redis Cluster: automatic sharding across 16384 hash slots
+-- Key → CRC16(key) mod 16384 → hash slot → assigned to a node
+
+-- 3-master + 3-replica cluster: each master handles ~5461 hash slots
+-- Automatic failover: if a master dies, its replica is promoted
+
+-- Hash tags force multi-key operations to the same slot:
+SET {user:1001}:session "data"
+SET {user:1001}:cart    "data"
+-- Both keys hash on {user:1001} → guaranteed same slot → MGET works cross-key
+
+-- Limitation: multi-key commands (MGET, MSET, SUNION) only work when all keys
+-- are in the same slot. Use hash tags when you need transactional across keys.</div>
+
+      <h2>Summary</h2>
+      <ul>
+        <li>Redis offers 8 data types: String, Hash, List, Set, Sorted Set, Stream, Bitmap, HyperLogLog</li>
+        <li>Each type has O(1) or O(log N) operations for its primary use case — velocity is a feature</li>
+        <li>Choose eviction policy based on access pattern: allkeys-lfu for skewed hot/cold data</li>
+        <li>Persistence: RDB for fast snapshots, AOF for durability, hybrid for both; disable for pure cache</li>
+        <li>Lua scripts and MULTI/EXEC provide atomicity for multi-step operations</li>
+        <li>Redis Cluster shards across 16384 hash slots; use hash tags to co-locate related keys</li>
+      </ul>
+    </article>
+  </main>
+
+  <footer class="page-footer">
+    <p>Part of the DBMS Series — <a href="/articles.html">View all articles</a></p>
+  </footer>
+</body>
+</html>

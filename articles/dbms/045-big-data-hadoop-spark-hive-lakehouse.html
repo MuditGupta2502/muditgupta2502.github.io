@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>Big Data and Modern Database Ecosystems: Hadoop, Spark, Hive and the Lakehouse | Mudit Gupta</title>
+  <meta name="description" content="Big data processing with Hadoop HDFS, Apache Spark, Hive, HBase, the data lakehouse architecture, columnar storage formats Parquet and ORC, and when to use each." />
+  <link rel="stylesheet" href="/assets/css/articles.css" />
+  <style>
+    .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
+    .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; color: #1a1a1a; }
+    .article-content h3 { margin-top: 1.5rem; margin-bottom: 0.75rem; color: #1a1a1a; }
+    .article-content p { margin-bottom: 1rem; color: #333; }
+    .article-content ul, .article-content ol { margin-left: 2rem; margin-bottom: 1rem; }
+    .article-content li { margin-bottom: 0.5rem; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; white-space: pre; margin-bottom: 1rem; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    table th, table td { border: 1px solid #ddd; padding: 0.75rem; text-align: left; }
+    table th { background: #f0f0f0; font-weight: 600; }
+    .note-box { background: #fff8e1; border-left: 4px solid #f9a825; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .tip-box { background: #e8f5e9; border-left: 4px solid #43a047; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .danger-box { background: #ffebee; border-left: 4px solid #e53935; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a href="/" class="home-link">Mudit Gupta</a>
+      <div class="topbar-actions">
+        <a href="/articles.html" class="btn btn-outline">Articles</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <article class="article-content">
+      <p class="kicker">DBMS Series | Part 045</p>
+      <h1>Big Data and Modern Database Ecosystems: Hadoop, Spark, Hive and the Lakehouse</h1>
+      <p class="meta">Architecture | 25 min read</p>
+
+      <p>
+        When data volumes outgrow what a single relational database can process — think
+        petabytes across billions of rows — the big data ecosystem provides purpose-built
+        tools. Understanding when these tools are needed (and when they're overkill) is
+        essential for designing practical data architectures.
+      </p>
+
+      <h2>Why Big Data Tools Exist</h2>
+      <p>Traditional RDBMS limits hit when:</p>
+      <ul>
+        <li>Table has 100 billion rows — even with indexes, full scans take hours</li>
+        <li>Daily data ingest is 1TB+ — single-node write throughput becomes a bottleneck</li>
+        <li>Need to run ML feature extraction over entire historical dataset</li>
+        <li>Mix of structured + semi-structured data (logs, JSON, images, video)</li>
+      </ul>
+      <p>Big data tools trade away transactionality and ACID for horizontal scalability and throughput.</p>
+
+      <h2>Hadoop Ecosystem</h2>
+      <div class="code-block">-- HDFS (Hadoop Distributed File System):
+-- Files split into 128MB blocks; replicated 3× across DataNodes
+-- NameNode: master — holds file→block mapping (metadata)
+-- DataNodes: workers — store actual blocks
+-- Write pattern: client → NameNode (get block assignments) → write to 3 DataNodes in pipeline
+-- Read pattern: client → NameNode (find blocks) → read from nearest DataNode
+
+-- Key properties:
+-- High throughput for sequential reads (streaming workloads)
+-- Poor latency for small random reads (not suitable for OLTP)
+-- Rack-aware replication: 2 replicas in same rack, 1 in different rack
+-- Fault tolerance: DataNode failure → NameNode triggers re-replication
+
+-- MapReduce: original Hadoop processing framework
+-- Map phase: each node processes its local data blocks → emits (key, value) pairs
+-- Shuffle phase: all values for same key sent to same reducer
+-- Reduce phase: aggregate values per key → final output
+
+-- Word count example (conceptual):
+-- MAP: each document word → emit ("word", 1)
+-- SHUFFLE: all ("database", 1), ("database", 1), ("database", 1) → one reducer
+-- REDUCE: sum all counts for "database" → emit ("database", 3)
+
+-- Limitations that led to Spark:
+-- Each MapReduce writes intermediate results to HDFS (disk)
+-- Multi-stage jobs: each stage materializes to disk before next stage reads
+-- A 10-stage pipeline: 10 HDFS read-write cycles → slow for iterative algorithms (ML)
+-- Spark fixes this with in-memory DAG execution</div>
+
+      <h2>Apache Spark</h2>
+      <div class="code-block">-- Spark: distributed in-memory processing engine
+-- 100x faster than MapReduce for iterative algorithms; 10x for batch jobs
+-- Core abstraction: RDD (Resilient Distributed Dataset) and DataFrame/Dataset API
+
+-- Lazy evaluation: transformations are not executed until an action is called
+-- All transformations build a DAG; action triggers optimization + execution
+from pyspark.sql import SparkSession
+
+spark = SparkSession.builder.appName("OrderAnalysis").getOrCreate()
+
+# Read Parquet data from S3 (lazy — no data read yet):
+df = spark.read.parquet("s3://data-lake/orders/")
+
+# Chain transformations (all lazy):
+result = (
+    df
+    .filter(df.status == "completed")
+    .filter(df.order_date >= "2024-01-01")
+    .groupBy("customer_id", "product_category")
+    .agg({"total": "sum", "id": "count"})
+    .withColumnRenamed("sum(total)", "revenue")
+    .withColumnRenamed("count(id)", "order_count")
+    .orderBy("revenue", ascending=False)
+)
+
+# Action: this triggers actual execution of the DAG:
+result.write.parquet("s3://data-lake/reports/customer_category_revenue/")
+
+-- Spark execution model:
+-- Driver program builds the DAG
+-- Cluster manager (YARN / Kubernetes / Spark standalone) allocates executors
+-- Executors run tasks in parallel across partitions
+-- Shuffle: expensive operation (redistributes data across nodes by key)
+-- Partition: unit of parallelism — 200 partitions = up to 200 parallel tasks
+
+-- DataFrame operations map to SQL concepts:
+-- .filter() = WHERE
+-- .groupBy() = GROUP BY
+-- .join() = JOIN (shuffle join for large tables, broadcast join for small tables)
+-- .agg() = aggregate functions
+-- .explain() shows the execution plan (like EXPLAIN in PostgreSQL)</div>
+
+      <h2>Apache Hive</h2>
+      <div class="code-block">-- Hive: SQL interface on top of distributed storage (HDFS / S3)
+-- Converts HiveQL (SQL dialect) into MapReduce or Spark/Tez jobs
+-- Schema-on-read: define schema at query time, not when data is stored
+-- Data stays in files (Parquet, ORC, CSV) on HDFS/S3
+
+-- Hive metastore: catalog of table definitions (schema, partition info, location)
+-- Other tools (Spark, Presto, Athena) also query the Hive metastore
+
+-- Create an external table (data already in S3 as Parquet):
+CREATE EXTERNAL TABLE orders (
+    order_id    BIGINT,
+    customer_id BIGINT,
+    status      STRING,
+    total       DECIMAL(12,2),
+    created_at  TIMESTAMP
+)
+PARTITIONED BY (order_year INT, order_month INT)
+STORED AS PARQUET
+LOCATION 's3://data-lake/orders/';
+
+-- Load partitions (tell Hive where partitions are):
+MSCK REPAIR TABLE orders;
+
+-- Query just like SQL:
+SELECT
+    order_year,
+    order_month,
+    SUM(total) AS monthly_revenue,
+    COUNT(*) AS order_count
+FROM orders
+WHERE status = 'completed'
+GROUP BY order_year, order_month
+ORDER BY order_year, order_month;
+
+-- Partition pruning: query above touches only partitions with matching order_year/order_month
+-- Without partitioning: full table scan of all data
+-- With partitioning: scans only relevant partition directories
+
+-- Hive vs modern alternatives:
+-- Hive MapReduce: minutes to hours for large queries (too slow for interactive use)
+-- Hive with Tez/Spark: seconds to minutes (acceptable for scheduled reports)
+-- AWS Athena (Presto): seconds for most queries (serverless, per-byte pricing)
+-- Databricks / Spark SQL: seconds for most queries (more control, more cost)</div>
+
+      <h2>Data Lakehouse Architecture</h2>
+      <div class="code-block">-- Traditional Architecture:
+-- OLTP DB (source of truth) → ETL pipeline → Data Warehouse → Reports/Analytics
+-- Problem: Data warehouse is expensive (compute and storage tightly coupled)
+--          Raw/unstructured data cannot be stored in data warehouse
+--          ETL is complex, brittle, and introduces latency (hours to days)
+
+-- Data Lake (older pattern):
+-- All raw data dumped to cheap S3/GCS/ADLS storage as files
+-- Problem: no ACID, no schema enforcement, no data quality, "data swamp"
+-- Consumers do not trust the data; governance is impossible
+
+-- Data Lakehouse (modern pattern: Delta Lake, Apache Iceberg, Apache Hudi):
+-- Stores data as open columnar files (Parquet) on cheap object storage
+-- Adds an ACID transaction layer on top via a transaction log
+-- Supports: time travel (read data as of any past version), MERGE (upsert), DELETE
+-- Schema evolution with backward and forward compatibility
+
+-- Delta Lake example (PySpark + Delta Lake):
+from delta.tables import DeltaTable
+
+# Write with ACID:
+spark.range(10).write.format("delta").save("s3://data-lake/ratings/")
+
+# MERGE INTO (upsert: update if exists, insert if new):
+delta_table = DeltaTable.forPath(spark, "s3://data-lake/ratings/")
+delta_table.alias("old").merge(
+    new_data.alias("new"),
+    "old.id = new.id"
+).whenMatchedUpdateAll().whenNotMatchedInsertAll().execute()
+
+# Time travel: read as of 1 day ago:
+spark.read.format("delta").option("timestampAsOf", "2024-11-03").load("s3://data-lake/ratings/")
+
+# Read 2 versions ago:
+spark.read.format("delta").option("versionAsOf", 5).load("s3://data-lake/ratings/")
+
+-- Iceberg advantages over Delta:
+-- Open standard (not vendor-specific)
+-- Hidden partitioning (partition evolution without table rewrites)
+-- Row-level deletes (important for GDPR right-to-be-forgotten)
+-- Concurrent writes without conflicts (OCC-based)</div>
+
+      <h2>Columnar Storage: Parquet and ORC</h2>
+      <div class="code-block">-- Row-oriented storage (typical RDBMS):
+-- Store row by row: [id=1, name="Alice", age=30] [id=2, name="Bob", age=25]
+-- Good for: reads of entire rows (OLTP point lookups)
+-- Bad for: aggregate queries that use only a few columns (OLAP)
+
+-- Columnar storage (Parquet, ORC):
+-- Store column by column: [id: 1,2,3...] [name: "Alice","Bob"...] [age: 30,25...]
+-- OLAP query: SELECT SUM(revenue) FROM orders → reads ONLY the revenue column
+-- In row storage: reads entire row for every row scanned
+-- In columnar: reads only revenue bytes, skips all other columns
+
+-- Parquet: Apache Parquet (open, widely supported)
+-- Row groups: data is split into row groups (~128MB each)
+-- Column chunks: within each row group, each column stored contiguously
+-- Page: unit of compression (~ 1MB); per-page statistics (min, max)
+-- File footer: metadata about all row groups and column statistics
+
+-- Predicate pushdown:
+-- Query: WHERE year = 2024 AND total > 1000
+-- Parquet reader: check row group statistics for year and total
+-- If row group max(total) < 1000 → skip entire row group (no decompression needed)
+-- Dramatically reduces I/O for selective queries
+
+-- Compression:
+-- Common choices: Snappy (fast, moderate compression), Zstd (better compression, fast)
+-- LZ4 (fastest, lower compression), Gzip (best compression, slowest)
+-- Dictionary encoding: for low-cardinality columns (status, country)
+--   First occurrence: "completed" → ID 0; subsequent: just store ID 0
+--   Typical 5-10x compression for low-cardinality string columns
+
+-- ORC vs Parquet:
+-- ORC: Optimized Row Columnar — Hive native; better compression for Hive workloads
+-- Parquet: more widely supported (Spark, Athena, BigQuery, Redshift, Pandas, DuckDB)
+-- In practice: Parquet with Snappy/Zstd is the default for most modern data engineering</div>
+
+      <h2>HBase: Wide-Column NoSQL on Hadoop</h2>
+      <div class="code-block">-- HBase: distributed key-value store built on HDFS
+-- Modeled after Google Bigtable
+-- Row key: the only indexed field; rows sorted lexicographically by key
+-- Column families: must be defined at table creation (like schema namespaces)
+-- Column qualifiers: flexible — any string, defined at write time (schemaless per row)
+
+-- Good for:
+-- Very high write throughput (millions of writes/sec)
+-- Time-series data (row key = device_id + timestamp → range scan for device history)
+-- Wide rows with variable columns (user behavior events, product attributes)
+
+-- Row key design is critical:
+-- Sequential keys (e.g., auto-increment) → all writes go to one region → hotspot
+-- Use salted or reversed timestamp keys to spread writes across regions:
+-- Row key = REVERSE(timestamp) + device_id → recent data spread across regions
+
+-- HBase vs Cassandra vs DynamoDB:
+-- HBase: requires Hadoop/ZooKeeper; strong CP characteristics; more operational overhead
+-- Cassandra: distributed wide-column; AP (eventual consistency); no Hadoop needed; simpler ops
+-- DynamoDB: fully managed; strong consistency option; expensive at scale; no open-source option</div>
+
+      <h2>When to Use What</h2>
+      <table>
+        <tr><th>Use Case</th><th>Tool</th><th>Why</th></tr>
+        <tr><td>OLTP (orders, users, transactions)</td><td>PostgreSQL / MySQL</td><td>ACID, low latency, rich SQL</td></tr>
+        <tr><td>Real-time analytics (&lt;1TB)</td><td>PostgreSQL + indexes, or DuckDB</td><td>No additional infrastructure needed</td></tr>
+        <tr><td>Batch ETL / data transformation</td><td>Apache Spark</td><td>Distributed in-memory; handles terabytes</td></tr>
+        <tr><td>Interactive SQL on S3 data</td><td>AWS Athena / Presto</td><td>Serverless; pay-per-query; no cluster management</td></tr>
+        <tr><td>Historical analytics warehouse</td><td>Snowflake, BigQuery, Redshift</td><td>Managed, auto-scaling, petabyte-scale</td></tr>
+        <tr><td>ML feature engineering</td><td>Spark + Delta Lake</td><td>ACID, time travel, version control for features</td></tr>
+        <tr><td>High-write time series</td><td>InfluxDB, Cassandra, HBase</td><td>Write-optimized, low-latency append</td></tr>
+      </table>
+
+      <h2>Summary</h2>
+      <ul>
+        <li>Hadoop HDFS: distributed files with 3× replication; sequential read optimized; basis for the big data ecosystem</li>
+        <li>MapReduce: disk-based; slow for multi-stage jobs. Spark: in-memory DAG; 100× faster for iterative workloads</li>
+        <li>Hive: SQL on files; partition pruning for performance; schema-on-read model</li>
+        <li>Data lakehouse (Delta Lake, Iceberg): ACID transactions + time travel on cheap object storage — combines warehouse quality with lake economics</li>
+        <li>Parquet: columnar storage; predicate pushdown; column projection → dramatically less I/O for OLAP queries</li>
+        <li>Don't use big data tools for small data — a well-indexed PostgreSQL handles billions of rows effectively</li>
+      </ul>
+    </article>
+  </main>
+
+  <footer class="page-footer">
+    <p>Part of the DBMS Series — <a href="/articles.html">View all articles</a></p>
+  </footer>
+</body>
+</html>

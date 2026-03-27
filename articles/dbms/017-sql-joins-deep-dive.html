@@ -1,0 +1,333 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>SQL Joins Deep Dive: Every Type with Real-World Scenarios | Mudit Gupta</title>
+  <meta name="description" content="Master every SQL join type with real-world examples: INNER, LEFT, RIGHT, FULL OUTER, CROSS, SELF, NATURAL joins, LATERAL joins, anti-joins, and semi-joins with performance implications." />
+  <link rel="stylesheet" href="/assets/css/articles.css" />
+  <style>
+    .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
+    .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; color: #1a1a1a; }
+    .article-content h3 { margin-top: 1.5rem; margin-bottom: 0.75rem; color: #1a1a1a; }
+    .article-content p { margin-bottom: 1rem; color: #333; }
+    .article-content ul, .article-content ol { margin-left: 2rem; margin-bottom: 1rem; }
+    .article-content li { margin-bottom: 0.5rem; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; white-space: pre; margin-bottom: 1rem; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    table th, table td { border: 1px solid #ddd; padding: 0.75rem; text-align: left; }
+    table th { background: #f0f0f0; font-weight: 600; }
+    .note-box { background: #fff8e1; border-left: 4px solid #f9a825; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .tip-box { background: #e8f5e9; border-left: 4px solid #43a047; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a href="/" class="home-link">Mudit Gupta</a>
+      <div class="topbar-actions">
+        <a href="/articles.html" class="btn btn-outline">Articles</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <article class="article-content">
+      <p class="kicker">DBMS Series | Part 017</p>
+      <h1>SQL Joins Deep Dive: Every Type with Real-World Scenarios</h1>
+      <p class="meta">SQL Advanced | 30 min read</p>
+
+      <p>
+        Joins are the most fundamental operation in relational databases — they're why we normalize
+        data into multiple tables instead of storing everything in one flat structure. Yet join
+        behavior has many subtle edges. This article covers every join type with working examples,
+        explains when each is appropriate, and highlights the pitfalls that silently return wrong results.
+      </p>
+
+      <h2>The Sample Schema</h2>
+      <div class="code-block">-- E-commerce schema for all examples
+Customers: customer_id, name, city, loyalty_tier
+Orders:    order_id, customer_id, order_date, total, status
+Products:  product_id, name, category, price
+OrderItems: order_id, product_id, quantity, unit_price
+Reviews:   review_id, customer_id, product_id, rating, review_text</div>
+
+      <h2>INNER JOIN</h2>
+      <p>
+        Returns rows that have matching values in <em>both</em> tables. The most common join type.
+        Rows without a match in either table are excluded.
+      </p>
+      <div class="code-block">-- Orders with their customer names (only orders with matching customers)
+SELECT o.order_id, c.name as customer_name, o.total, o.status
+FROM Orders o
+INNER JOIN Customers c ON o.customer_id = c.customer_id
+WHERE o.order_date >= '2024-01-01'
+ORDER BY o.total DESC;
+
+-- Multi-table INNER JOIN: orders with items and products
+SELECT o.order_id, c.name, p.name AS product, oi.quantity, oi.unit_price
+FROM Orders o
+JOIN Customers c ON o.customer_id = c.customer_id
+JOIN OrderItems oi ON o.order_id = oi.order_id
+JOIN Products p ON oi.product_id = p.product_id
+WHERE p.category = 'Electronics';</div>
+      <p><strong>Key behavior:</strong> If a customer has no orders, they don't appear. If an order has no customer (data integrity issue), it doesn't appear either.</p>
+
+      <h2>LEFT (OUTER) JOIN</h2>
+      <p>
+        Returns all rows from the <em>left</em> table, with matching rows from the right table.
+        If no match exists in the right table, NULLs fill the right table's columns.
+      </p>
+      <div class="code-block">-- ALL customers, even those who have never ordered
+SELECT c.customer_id, c.name, COUNT(o.order_id) AS order_count
+FROM Customers c
+LEFT JOIN Orders o ON c.customer_id = o.customer_id
+GROUP BY c.customer_id, c.name
+ORDER BY order_count DESC;
+-- Customers with no orders will have order_count = 0
+
+-- Find customers who have NEVER placed an order (anti-pattern I)
+SELECT c.customer_id, c.name
+FROM Customers c
+LEFT JOIN Orders o ON c.customer_id = o.customer_id
+WHERE o.order_id IS NULL;  -- NULL means no match found in Orders
+
+-- Products with no reviews
+SELECT p.product_id, p.name
+FROM Products p
+LEFT JOIN Reviews r ON p.product_id = r.product_id
+WHERE r.review_id IS NULL;</div>
+
+      <div class="note-box">
+        <strong>WHERE clause pitfall:</strong> If you add a condition on the right table's non-NULL column
+        in a LEFT JOIN's WHERE clause, it effectively converts the LEFT JOIN back to an INNER JOIN.
+        <code>LEFT JOIN Orders o ... WHERE o.status = 'shipped'</code> — this excludes customers
+        with no orders entirely. Put that condition in the JOIN ON clause instead if you want to preserve
+        all left rows.
+      </div>
+      <div class="code-block">-- WRONG: converts LEFT JOIN to INNER JOIN
+SELECT c.name, o.order_id
+FROM Customers c
+LEFT JOIN Orders o ON c.customer_id = o.customer_id
+WHERE o.status = 'shipped';  -- customers with no orders are excluded!
+
+-- CORRECT: filter IN the ON clause
+SELECT c.name, o.order_id
+FROM Customers c
+LEFT JOIN Orders o ON c.customer_id = o.customer_id AND o.status = 'shipped';
+-- Now all customers appear; those with no shipped orders have NULL for order_id</div>
+
+      <h2>RIGHT (OUTER) JOIN</h2>
+      <p>
+        Returns all rows from the <em>right</em> table, with matching rows from the left. In practice,
+        RIGHT JOIN is rarely needed — you can always rewrite it as a LEFT JOIN by swapping table order.
+      </p>
+      <div class="code-block">-- Orders with their customers (all orders, even without a customer match)
+SELECT o.order_id, c.name
+FROM Customers c
+RIGHT JOIN Orders o ON c.customer_id = o.customer_id;
+-- Equivalent to:
+SELECT o.order_id, c.name
+FROM Orders o
+LEFT JOIN Customers c ON c.customer_id = o.customer_id;</div>
+
+      <h2>FULL OUTER JOIN</h2>
+      <p>
+        Returns all rows from both tables. Unmatched rows from either side get NULLs for the other
+        side's columns. MySQL does not support FULL OUTER JOIN natively — emulate with UNION.
+      </p>
+      <div class="code-block">-- PostgreSQL: all customers and all orders; NULLs show unmatched
+SELECT c.customer_id, c.name, o.order_id, o.total
+FROM Customers c
+FULL OUTER JOIN Orders o ON c.customer_id = o.customer_id;
+
+-- Use case: data reconciliation — find rows with no match on either side
+SELECT c.customer_id, o.order_id
+FROM Customers c
+FULL OUTER JOIN Orders o ON c.customer_id = o.customer_id
+WHERE c.customer_id IS NULL OR o.order_id IS NULL;
+
+-- MySQL FULL OUTER JOIN emulation
+SELECT c.customer_id, o.order_id FROM Customers c LEFT JOIN Orders o ON c.customer_id = o.customer_id
+UNION
+SELECT c.customer_id, o.order_id FROM Customers c RIGHT JOIN Orders o ON c.customer_id = o.customer_id;</div>
+
+      <h2>CROSS JOIN (Cartesian Product)</h2>
+      <p>
+        Combines every row from the first table with every row from the second. If table A has 5 rows
+        and B has 10 rows, the result has 50 rows. Rarely used directly; useful for generating combinations.
+      </p>
+      <div class="code-block">-- Generate all possible product-category combinations for a new matrix
+SELECT p.product_id, sz.size_name
+FROM Products p
+CROSS JOIN SizeOptions sz
+-- Generates every product paired with every size option
+
+-- Implicit CROSS JOIN (comma-separated in FROM)
+SELECT * FROM A, B  -- same as: FROM A CROSS JOIN B
+
+-- Use case: generate a calendar grid
+SELECT dates.d, hours.h
+FROM (SELECT generate_series('2024-01-01'::date, '2024-12-31'::date, '1 day') AS d) dates
+CROSS JOIN (SELECT generate_series(0,23) AS h) hours;
+-- Creates every hour of every day in 2024</div>
+
+      <h2>SELF JOIN</h2>
+      <p>
+        A table is joined to itself. Essential for hierarchical data, comparing rows within the same
+        table, or finding relationships between rows in the same set.
+      </p>
+      <div class="code-block">-- Employee hierarchy: find each employee's manager name
+SELECT e.employee_id, e.name AS employee, mgr.name AS manager
+FROM Employees e
+LEFT JOIN Employees mgr ON e.manager_id = mgr.employee_id;
+-- LEFT JOIN: include employees with no manager (CEO has no manager)
+
+-- Find customers in the same city
+SELECT a.customer_id, a.name, b.name AS same_city_customer
+FROM Customers a
+INNER JOIN Customers b ON a.city = b.city AND a.customer_id < b.customer_id;
+-- a.customer_id < b.customer_id prevents duplicates (A,B) and (B,A) and (A,A)
+
+-- Products cheaper than average price in their category
+SELECT p1.product_id, p1.name, p1.price, p1.category
+FROM Products p1
+JOIN (
+  SELECT category, AVG(price) AS avg_price
+  FROM Products
+  GROUP BY category
+) p2 ON p1.category = p2.category
+WHERE p1.price < p2.avg_price;</div>
+
+      <h2>NATURAL JOIN</h2>
+      <p>
+        Automatically joins on all columns with the same name in both tables. Dangerous in practice —
+        if a column is added to either table with a coincidentally matching name, the join semantics
+        change silently.
+      </p>
+      <div class="code-block">-- Potentially unsafe
+SELECT * FROM Orders NATURAL JOIN Customers;
+-- Joins on: customer_id (if that's the only common column name)
+
+-- But if both tables later get a "status" or "created_at" column,
+-- NATURAL JOIN starts joining on those too — SILENTLY wrong results!
+
+-- Prefer explicit JOIN conditions always:
+SELECT * FROM Orders o JOIN Customers c ON o.customer_id = c.customer_id;</div>
+
+      <h2>Semi-Join and Anti-Join</h2>
+      <p>
+        These are not explicit keywords in SQL — they're patterns that express existence/non-existence
+        of a match, <em>without</em> duplicating rows from the left table based on multiple matches.
+      </p>
+      <div class="code-block">-- SEMI-JOIN: Customers who have at least one order (no customer duplication)
+-- Method 1: IN
+SELECT DISTINCT c.customer_id, c.name
+FROM Customers c
+WHERE c.customer_id IN (SELECT customer_id FROM Orders);
+
+-- Method 2: EXISTS (preferred — stops at first match, never duplicates)
+SELECT c.customer_id, c.name
+FROM Customers c
+WHERE EXISTS (
+  SELECT 1 FROM Orders o WHERE o.customer_id = c.customer_id
+);
+
+-- ANTI-JOIN: Customers who have NEVER ordered (no duplicates)
+-- Method 1: NOT IN (danger: NULL in subquery makes result empty!)
+SELECT c.customer_id, c.name
+FROM Customers c
+WHERE c.customer_id NOT IN (SELECT customer_id FROM Orders WHERE customer_id IS NOT NULL);
+
+-- Method 2: NOT EXISTS (safer — handles NULLs correctly)
+SELECT c.customer_id, c.name
+FROM Customers c
+WHERE NOT EXISTS (
+  SELECT 1 FROM Orders o WHERE o.customer_id = c.customer_id
+);
+
+-- Method 3: LEFT JOIN + IS NULL (intuitive, efficient)
+SELECT c.customer_id, c.name
+FROM Customers c
+LEFT JOIN Orders o ON c.customer_id = o.customer_id
+WHERE o.order_id IS NULL;</div>
+
+      <div class="note-box">
+        <strong>NOT IN with NULLs trap:</strong> If the subquery in NOT IN returns even one NULL,
+        the entire NOT IN condition becomes UNKNOWN for every row, and the query returns zero results!
+        Always prefer NOT EXISTS over NOT IN for anti-join patterns.
+      </div>
+
+      <h2>LATERAL JOIN (PostgreSQL / SQL Server APPLY)</h2>
+      <p>
+        LATERAL allows a subquery in the FROM clause to reference columns from preceding tables —
+        like a correlated subquery but in the FROM clause. Useful for "top N per group" queries.
+      </p>
+      <div class="code-block">-- Top 3 most recent orders per customer
+SELECT c.name, o.order_id, o.order_date, o.total
+FROM Customers c
+CROSS JOIN LATERAL (
+  SELECT order_id, order_date, total
+  FROM Orders
+  WHERE customer_id = c.customer_id  -- references c.customer_id from outer query
+  ORDER BY order_date DESC
+  LIMIT 3
+) o;
+-- Without LATERAL, this "top N per group" is much harder to express
+
+-- SQL Server equivalent using CROSS APPLY
+SELECT c.name, o.order_id, o.order_date
+FROM Customers c
+CROSS APPLY (
+  SELECT TOP 3 order_id, order_date FROM Orders
+  WHERE customer_id = c.customer_id
+  ORDER BY order_date DESC
+) o;</div>
+
+      <h2>Join Performance Considerations</h2>
+      <table>
+        <tr><th>Algorithm</th><th>When Used</th><th>Complexity</th></tr>
+        <tr><td>Nested Loop Join</td><td>Small tables, indexed FK column</td><td>O(n × m) worst case; O(n log m) with index</td></tr>
+        <tr><td>Hash Join</td><td>Large tables, no useful index</td><td>O(n + m) average; uses memory</td></tr>
+        <tr><td>Merge Join</td><td>Both tables already sorted on join key</td><td>O(n + m) — very fast for large sorted sets</td></tr>
+      </table>
+      <div class="code-block">-- Check join execution plan
+EXPLAIN ANALYZE
+SELECT c.name, COUNT(o.order_id)
+FROM Customers c
+JOIN Orders o ON c.customer_id = o.customer_id
+GROUP BY c.name;
+
+-- Key things to look for in EXPLAIN output:
+-- "Hash Join": hash build on smaller table, probe with larger → good for large unindexed tables
+-- "Index Scan using idx_orders_customer_id": FK column is indexed → fast nested loop join
+-- "Seq Scan": no index — if on a large table, add an index on the join column
+-- "rows=" estimate << actual: stale statistics — run ANALYZE to update</div>
+
+      <div class="tip-box">
+        <strong>Index your foreign keys!</strong> Unindexed foreign key columns cause full table scans
+        on the child table for every join. In PostgreSQL, foreign keys don't auto-create indexes
+        (unlike MySQL's InnoDB). Always create an index manually on FK columns:
+        <code>CREATE INDEX idx_orders_customer ON Orders(customer_id);</code>
+      </div>
+
+      <h2>Summary</h2>
+      <ul>
+        <li><strong>INNER JOIN:</strong> Only matching rows — the default, most common join</li>
+        <li><strong>LEFT JOIN:</strong> All left rows + matches from right (NULLs for unmatched) — use for "include rows with no relationship"</li>
+        <li><strong>FULL OUTER JOIN:</strong> All rows from both sides — data reconciliation, finding gaps</li>
+        <li><strong>CROSS JOIN:</strong> All combinations — calendar grids, test data generation</li>
+        <li><strong>SELF JOIN:</strong> Table joined to itself — hierarchies, same-table comparisons</li>
+        <li><strong>Semi/Anti-join:</strong> Existence check — use EXISTS / NOT EXISTS patterns</li>
+        <li><strong>LATERAL JOIN:</strong> Correlated FROM clause — top-N per group</li>
+        <li>Always index foreign key columns; use EXPLAIN to verify join strategies</li>
+      </ul>
+    </article>
+  </main>
+
+  <footer class="page-footer">
+    <p>Part of the DBMS Series — <a href="/articles.html">View all articles</a></p>
+  </footer>
+</body>
+</html>

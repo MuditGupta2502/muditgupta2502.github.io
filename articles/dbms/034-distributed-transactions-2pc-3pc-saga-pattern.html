@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>Distributed Transactions: Two-Phase Commit, Three-Phase Commit and Saga Pattern | Mudit Gupta</title>
+  <meta name="description" content="Distributed transaction protocols: 2PC mechanics and blocking failure mode, 3PC improvement, Saga pattern with choreography and orchestration, compensating transactions trade-offs." />
+  <link rel="stylesheet" href="/assets/css/articles.css" />
+  <style>
+    .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
+    .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; color: #1a1a1a; }
+    .article-content h3 { margin-top: 1.5rem; margin-bottom: 0.75rem; color: #1a1a1a; }
+    .article-content p { margin-bottom: 1rem; color: #333; }
+    .article-content ul, .article-content ol { margin-left: 2rem; margin-bottom: 1rem; }
+    .article-content li { margin-bottom: 0.5rem; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; white-space: pre; margin-bottom: 1rem; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    table th, table td { border: 1px solid #ddd; padding: 0.75rem; text-align: left; }
+    table th { background: #f0f0f0; font-weight: 600; }
+    .note-box { background: #fff8e1; border-left: 4px solid #f9a825; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .tip-box { background: #e8f5e9; border-left: 4px solid #43a047; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .danger-box { background: #ffebee; border-left: 4px solid #e53935; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a href="/" class="home-link">Mudit Gupta</a>
+      <div class="topbar-actions">
+        <a href="/articles.html" class="btn btn-outline">Articles</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <article class="article-content">
+      <p class="kicker">DBMS Series | Part 034</p>
+      <h1>Distributed Transactions: Two-Phase Commit, Three-Phase Commit and Saga Pattern</h1>
+      <p class="meta">Distributed Systems | 27 min read</p>
+
+      <p>
+        Distributed transactions coordinate updates across multiple independent databases or
+        services such that all updates commit or all roll back atomically. The challenge is that
+        networks can fail, nodes can crash, and no single coordinator can see the complete global
+        state without communication. This article contrasts the classical solutions (2PC, 3PC)
+        with the modern microservices approach (Saga).
+      </p>
+
+      <h2>Two-Phase Commit (2PC)</h2>
+      <p>
+        2PC is the standard protocol for distributed ACID transactions. A coordinator drives
+        two rounds of communication with all participant nodes.
+      </p>
+      <div class="code-block">-- Scenario: Transfer $100 from Payments DB to Wallet DB
+
+-- Phase 1: PREPARE
+-- Coordinator → Payments DB: "Can you commit? Reserve $100 debit"
+-- Coordinator → Wallet DB:   "Can you commit? Reserve $100 credit"
+-- 
+-- Payments DB: writes PREPARE record to WAL, acquires locks, responds VOTE_COMMIT
+-- Wallet DB:   writes PREPARE record to WAL, acquires locks, responds VOTE_COMMIT
+-- (If either responds VOTE_ABORT: coordinator sends GLOBAL_ABORT to all → done)
+
+-- Phase 2: COMMIT
+-- Coordinator writes COMMIT to its own log
+-- Coordinator → Payments DB: GLOBAL_COMMIT
+-- Coordinator → Wallet DB:   GLOBAL_COMMIT
+-- Both DBs: apply changes, release locks, acknowledge
+-- Coordinator writes COMPLETE to log
+
+-- Recovery on failure:
+-- If Payments DB crashes in Phase 1 (before PREPARE): no lock held → abort automatically
+-- If Payments DB crashes after PREPARE record: on restart, asks coordinator "what to do?"
+--   Coordinator says COMMIT → Payments DB commits
+--   Coordinator says ABORT  → Payments DB aborts
+-- If Coordinator crashes after writing its COMMIT record: on restart, re-sends COMMIT to all
+-- If Coordinator crashes before writing COMMIT: on restart, all participants are told to ABORT</div>
+
+      <h3>2PC's Blocking Failure Mode</h3>
+      <div class="code-block">-- The critical flaw: 2PC is a BLOCKING protocol
+-- Scenario: Coordinator crashes AFTER PREPARE but BEFORE COMMIT
+
+-- State: Payments DB and Wallet DB both voted COMMIT and are holding locks
+-- Both are waiting for Phase 2 message from coordinator
+-- Coordinator is down
+-- PARTICIPANTS ARE BLOCKED — they cannot abort (they voted COMMIT) 
+--                           they cannot commit (no COMMIT message received)
+-- They hold locks on the rows → blocking all other transactions on those rows
+-- They MUST wait for the coordinator to recover
+
+-- Duration of block: until coordinator restarts and sends the decision
+-- In production: this can be minutes or hours
+-- Timeout-based abort is UNSAFE: if the coordinator actually wrote COMMIT before crashing,
+-- aborting participants would violate atomicity
+
+-- Participants can ask other participants for the decision:
+-- If any participant already committed → all commit
+-- If any participant already aborted → all abort
+-- If all voted COMMIT but none committed yet → still stuck (need coordinator decision)
+
+-- This blocking under coordinator failure is 2PC's fundamental limitation</div>
+
+      <h2>Three-Phase Commit (3PC)</h2>
+      <div class="code-block">-- 3PC adds a "pre-commit" phase to remove the blocking window
+
+-- Phase 1: CANCOMMIT (same as 2PC Phase 1 - collect votes)
+-- Coordinator → Participants: "Can you commit?"
+-- Participants respond: YES/NO (but do NOT acquire locks yet)
+
+-- Phase 2: PRECOMMIT (new!)
+-- Coordinator → Participants: "PREPARE TO COMMIT" (only sent if all voted YES)
+-- Participants: acknowledge and LOCK resources; write PRECOMMIT to log
+-- At this point: participants know the final decision will be COMMIT
+-- They can commit independently if they don't hear from the coordinator
+
+-- Phase 3: DOCOMMIT
+-- Coordinator → Participants: COMMIT
+-- If participants don't receive DOCOMMIT in time: they can safely commit anyway
+-- (because if they received PRECOMMIT, they know all others also received PRECOMMIT)
+
+-- Why 3PC is non-blocking:
+-- In PRECOMMIT state, any participant can commit without coordinator
+-- If coordinator dies after PRECOMMIT: participants communicate with each other
+--   All in PRECOMMIT → safe to commit
+--   Any in CANCOMMIT (not PRECOMMIT) → safe to abort
+
+-- Limitation: 3PC is not widely used in practice
+-- It's non-blocking for crash failures, but NOT partition failures
+-- In a partition during PRECOMMIT, two groups may make different decisions (split-brain)
+-- Practical systems (Google Spanner) use Paxos/Raft instead of 3PC for coordination</div>
+
+      <h2>Saga Pattern: The Microservices Alternative</h2>
+      <p>
+        Sagas decompose a long-running distributed transaction into a sequence of local
+        transactions. If any step fails, compensating transactions undo the completed steps.
+        There is no global lock — each step commits independently.
+      </p>
+      <div class="code-block">-- Example: E-commerce order placement saga
+-- Step 1: Create order (Orders Service)
+-- Step 2: Reserve inventory (Inventory Service)
+-- Step 3: Charge payment (Payments Service)
+-- Step 4: Send confirmation email (Notification Service)
+
+-- Each step is an independent local transaction with its own commit
+-- Compensating transaction undoes each step if a later step fails:
+-- Compensating for Step 1: Cancel order
+-- Compensating for Step 2: Release reserved inventory
+-- Compensating for Step 3: Refund payment
+
+-- Happy path:
+-- [Create order COMMIT] → [Reserve inventory COMMIT] → [Charge payment COMMIT] → [Send email COMMIT]
+
+-- Failed path (payment declined):
+-- [Create order COMMIT] → [Reserve inventory COMMIT] → [Charge payment FAILS]
+-- → [Release inventory COMPENSATE] → [Cancel order COMPENSATE]
+
+-- Key trade-off: at this point, the order EXISTS in the DB as "pending" before it gets
+-- compensated. In 2PC, the order would never have been visible. In Saga, it's briefly
+-- visible before compensation. This is "eventual consistency".</div>
+
+      <h3>Saga Choreography</h3>
+      <div class="code-block">-- Choreography: each service listens to events and reacts
+-- No central orchestrator; services communicate via message queue
+
+-- Orders Service:
+-- After COMMIT order → PUBLISH "OrderCreated" event
+
+-- Inventory Service:
+-- LISTENS to "OrderCreated" → reserves inventory
+-- Success: PUBLISH "InventoryReserved" event
+-- Fail: PUBLISH "InventoryFailed" event
+
+-- Payments Service:
+-- LISTENS to "InventoryReserved" → charges payment
+-- Success: PUBLISH "PaymentCompleted" event
+-- Fail: PUBLISH "PaymentFailed" event → triggers compensations
+
+-- Orders Service (listening again):
+-- On "PaymentFailed": PUBLISH "OrderCancellationRequested"
+-- On "PaymentCompleted": update order status to "confirmed"
+
+-- Inventory Service (compensation):
+-- LISTENS to "OrderCancellationRequested" → release reservation
+
+-- Pros: loose coupling; each service independently deployable
+-- Cons: hard to track overall saga state; debugging distributed failures is complex</div>
+
+      <h3>Saga Orchestration</h3>
+      <div class="code-block">-- Orchestration: a central saga orchestrator drives all steps
+-- More complex central component, but clearer flow control
+
+class OrderSagaOrchestrator:
+    def __init__(self, order_id):
+        self.order_id = order_id
+        self.state = "STARTED"
+    
+    def execute(self):
+        # Step 1
+        result = order_service.create_order(self.order_id)
+        if result.failed: self.state = "FAILED"; return
+        self.state = "ORDER_CREATED"
+        
+        # Step 2
+        result = inventory_service.reserve(self.order_id)
+        if result.failed:
+            order_service.cancel_order(self.order_id)  # compensate step 1
+            self.state = "FAILED"; return
+        self.state = "INVENTORY_RESERVED"
+        
+        # Step 3
+        result = payment_service.charge(self.order_id)
+        if result.failed:
+            inventory_service.release(self.order_id)  # compensate step 2
+            order_service.cancel_order(self.order_id) # compensate step 1
+            self.state = "FAILED"; return
+        
+        self.state = "COMPLETED"
+
+-- Saga state must be persisted durably between steps!
+-- If orchestrator crashes mid-saga: on restart, reads persistent saga state,
+-- resumes from where it left off, or runs compensations</div>
+
+      <h2>2PC vs Saga Comparison</h2>
+      <table>
+        <tr><th>Dimension</th><th>2PC</th><th>Saga</th></tr>
+        <tr><td>Consistency</td><td>Strong (ACID across all participants)</td><td>Eventual (each step commits independently)</td></tr>
+        <tr><td>Failure behavior</td><td>Blocks during coordinator failure</td><td>Runs compensating transactions; no blocking</td></tr>
+        <tr><td>Isolation</td><td>Full isolation during transaction</td><td>No isolation: intermediate states visible</td></tr>
+        <tr><td>Scalability</td><td>Locks held across network; hard to scale</td><td>No distributed locks; highly scalable</td></tr>
+        <tr><td>Complexity</td><td>Low (protocol built into DB)</td><td>High (compensating logic must be implemented)</td></tr>
+        <tr><td>Use case</td><td>Same DB or tightly coupled services needing ACID</td><td>Microservices, long-running business processes</td></tr>
+      </table>
+
+      <div class="tip-box">
+        <strong>Outbox pattern: reliable Saga event publishing</strong><br/>
+        Problem: after committing a local transaction, what if the service crashes before
+        publishing the event? The DB says COMMIT but no event was sent → Saga is stuck.
+        Solution: write the event to an outbox table in the SAME local transaction as the
+        business data. A separate process (CDC/polling) reads the outbox and publishes events.
+        This guarantees "at least once" event delivery without distributed transactions.
+      </div>
+
+      <h2>Summary</h2>
+      <ul>
+        <li>2PC: two rounds (prepare + commit) ensure atomic distributed commits; participants hold locks until coordinator sends commit</li>
+        <li>2PC's weakness: coordinator failure after PREPARE blocks all participants indefinitely</li>
+        <li>3PC: adds pre-commit phase so participants can commit without coordinator decision; still vulnerable to network partitions</li>
+        <li>Saga: decomposes into local transactions with compensating rollbacks; no distributed locks; eventual consistency</li>
+        <li>Choreography: event-driven Saga; loose coupling but hard to track overall state</li>
+        <li>Orchestration: central coordinator drives Saga steps; clearer flow but single point of complexity</li>
+        <li>Use the Outbox pattern to ensure reliable event publishing within local transaction boundaries</li>
+      </ul>
+    </article>
+  </main>
+
+  <footer class="page-footer">
+    <p>Part of the DBMS Series — <a href="/articles.html">View all articles</a></p>
+  </footer>
+</body>
+</html>

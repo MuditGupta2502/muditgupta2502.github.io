@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>Database Caching Patterns: Cache-Aside, Write-Through, Write-Behind and Redis | Mudit Gupta</title>
+  <meta name="description" content="Database caching strategies including cache-aside, write-through, write-behind, read-through, and cache invalidation with Redis. Thundering herd and stampede prevention." />
+  <link rel="stylesheet" href="/assets/css/articles.css" />
+  <style>
+    .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
+    .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; color: #1a1a1a; }
+    .article-content h3 { margin-top: 1.5rem; margin-bottom: 0.75rem; color: #1a1a1a; }
+    .article-content p { margin-bottom: 1rem; color: #333; }
+    .article-content ul, .article-content ol { margin-left: 2rem; margin-bottom: 1rem; }
+    .article-content li { margin-bottom: 0.5rem; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; white-space: pre; margin-bottom: 1rem; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    table th, table td { border: 1px solid #ddd; padding: 0.75rem; text-align: left; }
+    table th { background: #f0f0f0; font-weight: 600; }
+    .note-box { background: #fff8e1; border-left: 4px solid #f9a825; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .tip-box { background: #e8f5e9; border-left: 4px solid #43a047; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .danger-box { background: #ffebee; border-left: 4px solid #e53935; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a href="/" class="home-link">Mudit Gupta</a>
+      <div class="topbar-actions">
+        <a href="/articles.html" class="btn btn-outline">Articles</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <article class="article-content">
+      <p class="kicker">DBMS Series | Part 041</p>
+      <h1>Database Caching Patterns: Cache-Aside, Write-Through, Write-Behind and Redis</h1>
+      <p class="meta">Architecture | 22 min read</p>
+
+      <p>
+        Caching is the most effective way to scale read-heavy workloads. A cache hit on
+        Redis takes ~0.1ms; the equivalent database query takes 5-100ms. For popular content
+        accessed by thousands of users, caching collapses the per-request database load to
+        almost zero. But caching also introduces consistency challenges — knowing which
+        pattern to use and when data can safely be slightly stale is the real skill.
+      </p>
+
+      <h2>Cache-Aside (Lazy Loading)</h2>
+      <div class="code-block">-- Most common pattern. Application manages the cache explicitly.
+-- Read path:
+--   1. Check cache
+--   2. Cache HIT: return cached value
+--   3. Cache MISS: fetch from database, write to cache, return value
+
+-- Python example:
+import redis, json
+
+r = redis.Redis(host='localhost', port=6379)
+
+def get_user(user_id: int) -> dict:
+    cache_key = f"user:{user_id}"
+    
+    # Step 1: Try cache
+    cached = r.get(cache_key)
+    if cached:
+        return json.loads(cached)                       # Cache HIT
+    
+    # Step 2: Cache miss → fetch from DB
+    user = db.query("SELECT * FROM users WHERE id = %s", [user_id])
+    if not user:
+        return None
+    
+    # Step 3: Populate cache (TTL = 5 minutes)
+    r.setex(cache_key, 300, json.dumps(user))           # Cache MISS → populate
+    return user
+
+-- Write path (invalidate cache on update):
+def update_user(user_id: int, data: dict):
+    db.execute("UPDATE users SET ... WHERE id = %s", [user_id])
+    r.delete(f"user:{user_id}")     # Invalidate; cache will reload on next read
+
+-- Pros:
+-- Only loads data that's actually requested (no cold start waste)
+-- Cache is separate from DB; DB failure does not lose cache data
+-- Cons:
+-- First request after miss/expiry = slow (cold start latency spike)
+-- Cache can serve stale data between write and next TTL expiry (if using TTL-only invalidation)</div>
+
+      <h2>Write-Through</h2>
+      <div class="code-block">-- Every write goes through the cache: cache and DB are always in sync
+-- Write path:
+--   1. Application writes to cache
+--   2. Cache synchronously writes to database
+--   3. Both succeed: write acknowledged to application
+--
+-- Read path: always a cache hit (cache is always up-to-date)
+
+-- Benefit: cache is never stale; cache hits possible immediately after write
+-- Drawback: write latency = DB write latency (cache doesn't help writes)
+-- Drawback: if item is never read again, we polluted the cache with useless data
+
+def write_through_update(user_id: int, data: dict):
+    # Write to DB first (strong durability guarantee)
+    db.execute("UPDATE users SET name=%s, email=%s WHERE id=%s",
+               [data['name'], data['email'], user_id])
+    
+    # Write to cache (so next read is a cache hit with current data)
+    r.setex(f"user:{user_id}", 3600, json.dumps(data))
+
+-- Often combined with cache-aside for reads:
+-- Reads: cache-aside (lazy)
+-- Writes: write-through (proactive cache update)
+-- This hybrid avoids stale reads caused by write invalidation race conditions</div>
+
+      <h2>Write-Behind (Write-Back)</h2>
+      <div class="code-block">-- Application writes to cache only; cache asynchronously flushes to database
+-- Used when write throughput is the bottleneck
+
+-- Write path:
+--   1. Application writes to cache
+--   2. Cache acknowledges immediately (sub-millisecond)
+--   3. Async: cache flushes changes to DB in batches
+
+-- Pros: writes are extremely fast; can batch multiple writes to same key
+-- Cons: data loss window if cache crashes before flush; complex implementation
+
+-- Redis example: accumulate order count changes, flush to DB periodically
+import asyncio
+
+async def increment_product_sold(product_id: int, quantity: int):
+    # Increment in Redis (atomic, fast)
+    r.incrby(f"product:{product_id}:sold_count", quantity)
+    # Mark as dirty for background flush
+    r.sadd("dirty_products", product_id)
+
+async def flush_dirty_to_db():
+    """Background task: runs every 5 seconds"""
+    while True:
+        dirty_ids = r.smembers("dirty_products")
+        if dirty_ids:
+            pipe = r.pipeline()
+            for pid in dirty_ids:
+                count = r.get(f"product:{pid}:sold_count")
+                if count:
+                    db.execute(
+                        "UPDATE products SET sold_count = sold_count + %s WHERE id = %s",
+                        [int(count), int(pid)]
+                    )
+                    pipe.delete(f"product:{pid}:sold_count")
+            r.srem("dirty_products", *dirty_ids)
+            pipe.execute()
+        await asyncio.sleep(5)
+
+-- Real-world use: view counts, like counts, shopping cart accumulation
+-- Twitter: like counts aggregated in Redis, synced to Postgres every few minutes</div>
+
+      <h2>Read-Through and Refresh-Ahead</h2>
+      <div class="code-block">-- Read-Through: cache itself loads from DB on a miss (not the application)
+-- Application calls cache only; cache handles DB interaction
+-- Library handles this: jellyfish, Spring Cache, Memcached with loader
+-- Benefit: cache miss logic in one place; simpler application code
+
+-- Refresh-Ahead: cache preemptively refreshes data before TTL expires
+-- When TTL is 80% consumed → background thread refreshes from DB
+-- Benefit: no cold start latency for hot keys; eliminates TTL expiry gaps
+-- Used by: CDNs (refresh content before cache-control max-age), product recommendation engines
+
+# Conceptual refresh-ahead logic:
+def get_with_refresh_ahead(key: str, ttl: int):
+    value, remaining_ttl = r.getex(key, EX=ttl)  # atomic get + reset TTL
+    
+    if value is None:
+        value = load_from_db(key)              # Cold start miss
+        r.setex(key, ttl, value)
+    elif remaining_ttl < ttl * 0.2:           # 80% through TTL
+        # Schedule async background refresh (don't block current request)
+        background_task(lambda: refresh_cache(key, ttl))
+    
+    return value</div>
+
+      <h2>Cache Invalidation Strategies</h2>
+      <div class="code-block">-- "There are only two hard things in CS: cache invalidation and naming things" — Phil Karlton
+
+-- Strategy 1: TTL-based expiry
+-- Set expire time when writing; cache auto-invalidates after TTL
+-- Simplest; acceptable for: product catalogs, user profiles, non-critical data
+-- Stale window = TTL (could be 5 minutes of stale data)
+r.setex("product:123", 300, json.dumps(product))  # 5-minute TTL
+
+-- Strategy 2: Event-based invalidation
+-- Explicit delete on write; cache refreshed on next read
+-- Best consistency; used for: financial data, inventory counts
+def update_price(product_id, new_price):
+    db.execute("UPDATE products SET price = %s WHERE id = %s", [new_price, product_id])
+    r.delete(f"product:{product_id}")  # Explicit invalidation
+
+-- Strategy 3: Versioned keys
+-- Never invalidate; just use new key for new version
+-- Old version auto-expires via TTL; new version written alongside old
+# Old: r.get("product:123:v5") returns old cached version
+# After update: r.set("product:123:v6", new_data, ex=300)
+# Next read: query DB for current version, get key "product:123:v6"
+-- Benefit: no race between delete and re-read; stale cache simply expires
+
+-- Strategy 4: Cache tags / dependency invalidation
+-- Tag cache entries with entities they depend on
+-- When entity changes: invalidate all entries with that tag
+-- Used by CDNs (Varnish cache tags, Fastly surrogate keys) and some ORM caches</div>
+
+      <h2>Thundering Herd / Cache Stampede</h2>
+      <div class="code-block">-- Problem: popular cache key expires
+-- 500 simultaneous requests all get a cache miss
+-- All 500 query the database concurrently → DB overwhelmed → cascade failure
+
+-- Solution 1: Mutex/Lock on cache miss
+import threading
+cache_lock = {}
+
+def get_product_safe(product_id: int):
+    cache_key = f"product:{product_id}"
+    value = r.get(cache_key)
+    if value:
+        return json.loads(value)
+    
+    # Only one thread fetches from DB
+    lock = cache_lock.setdefault(cache_key, threading.Lock())
+    with lock:
+        value = r.get(cache_key)   # Double-check after acquiring lock
+        if value:
+            return json.loads(value)
+        
+        result = db.query("SELECT * FROM products WHERE id = %s", [product_id])
+        r.setex(cache_key, 300, json.dumps(result))
+        return result
+
+-- Solution 2: Redis SET NX (Set if Not eXists) as distributed lock
+def get_with_redis_lock(product_id):
+    cache_key = f"product:{product_id}"
+    lock_key = f"lock:{cache_key}"
+    
+    value = r.get(cache_key)
+    if value:
+        return json.loads(value)
+    
+    # Try to acquire lock (NX = only set if key doesn't exist, PX = expiry in ms)
+    acquired = r.set(lock_key, "1", nx=True, px=5000)
+    if not acquired:
+        time.sleep(0.1)
+        return r.get(cache_key)   # Another process is loading; wait briefly
+    
+    try:
+        result = db.query("SELECT * FROM products WHERE id = %s", [product_id])
+        r.setex(cache_key, 300, json.dumps(result))
+        return result
+    finally:
+        r.delete(lock_key)
+
+-- Solution 3: Probabilistic early expiration (XFetch algorithm)
+-- Extend TTL randomly as expiry approaches (not all keys expire at exact same time)
+-- Stagger cache population across time → no single thundering moment</div>
+
+      <h2>Pattern Comparison</h2>
+      <table>
+        <tr><th>Pattern</th><th>Read Latency</th><th>Write Latency</th><th>Consistency</th><th>Best For</th></tr>
+        <tr><td>Cache-Aside</td><td>Fast (HIT), Slow (MISS)</td><td>Fast (DB only)</td><td>Eventual</td><td>General read-heavy, variable access patterns</td></tr>
+        <tr><td>Write-Through</td><td>Always fast</td><td>DB + cache</td><td>Strong</td><td>Read-heavy, write-infrequent, consistency-sensitive</td></tr>
+        <tr><td>Write-Behind</td><td>Always fast</td><td>Very fast</td><td>Loose (async)</td><td>Write-heavy; can tolerate brief inconsistency</td></tr>
+        <tr><td>Refresh-Ahead</td><td>Always fast</td><td>As cache-aside</td><td>Near-strong</td><td>Very hot keys; unacceptable cold start latency</td></tr>
+      </table>
+
+      <h2>Summary</h2>
+      <ul>
+        <li>Cache-aside: application manages cache; simple, lazy loading; stale window = TTL or until invalidation</li>
+        <li>Write-through: cache always in sync with DB; writes to both; no stale reads but no write speedup</li>
+        <li>Write-behind: cache absorbs write bursts; async flush to DB; risk of data loss on cache crash</li>
+        <li>Thundering herd prevention: distributed lock (Redis SET NX), jittered TTLs, or refresh-ahead</li>
+        <li>Event-based invalidation is more consistent than TTL-only; use TTL as a safety net regardless</li>
+        <li>Cache invalidation is the hardest part — design the strategy before adding the cache</li>
+      </ul>
+    </article>
+  </main>
+
+  <footer class="page-footer">
+    <p>Part of the DBMS Series — <a href="/articles.html">View all articles</a></p>
+  </footer>
+</body>
+</html>

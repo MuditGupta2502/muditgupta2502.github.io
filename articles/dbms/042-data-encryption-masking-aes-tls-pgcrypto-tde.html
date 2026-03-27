@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>Data Encryption and Masking: AES, TLS, pgcrypto, TDE and PII Protection | Mudit Gupta</title>
+  <meta name="description" content="Database encryption at rest and in transit, column-level encryption with pgcrypto, Transparent Data Encryption (TDE), data masking, tokenization, and GDPR/PCI compliance patterns." />
+  <link rel="stylesheet" href="/assets/css/articles.css" />
+  <style>
+    .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
+    .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; color: #1a1a1a; }
+    .article-content h3 { margin-top: 1.5rem; margin-bottom: 0.75rem; color: #1a1a1a; }
+    .article-content p { margin-bottom: 1rem; color: #333; }
+    .article-content ul, .article-content ol { margin-left: 2rem; margin-bottom: 1rem; }
+    .article-content li { margin-bottom: 0.5rem; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; white-space: pre; margin-bottom: 1rem; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    table th, table td { border: 1px solid #ddd; padding: 0.75rem; text-align: left; }
+    table th { background: #f0f0f0; font-weight: 600; }
+    .note-box { background: #fff8e1; border-left: 4px solid #f9a825; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .tip-box { background: #e8f5e9; border-left: 4px solid #43a047; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .danger-box { background: #ffebee; border-left: 4px solid #e53935; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a href="/" class="home-link">Mudit Gupta</a>
+      <div class="topbar-actions">
+        <a href="/articles.html" class="btn btn-outline">Articles</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <article class="article-content">
+      <p class="kicker">DBMS Series | Part 042</p>
+      <h1>Data Encryption and Masking: AES, TLS, pgcrypto, TDE and PII Protection</h1>
+      <p class="meta">Security | 24 min read</p>
+
+      <p>
+        Data encryption protects sensitive information even when a storage device is stolen,
+        a backup is compromised, or an attacker gains unauthorized access to the filesystem.
+        Knowing what to encrypt, at which layer, and how to manage keys is the difference
+        between a compliant system and a liability.
+      </p>
+
+      <h2>Encryption Layers</h2>
+      <table>
+        <tr><th>Layer</th><th>What it protects</th><th>Technology</th></tr>
+        <tr><td>In transit</td><td>Data moving over network between client and DB</td><td>TLS/SSL on the connection</td></tr>
+        <tr><td>At rest (whole disk)</td><td>Data if storage medium is stolen</td><td>OS-level disk encryption (LUKS, FileVault, BitLocker)</td></tr>
+        <tr><td>At rest (DB level)</td><td>Data files from OS-level access without DB keys</td><td>Transparent Data Encryption (TDE)</td></tr>
+        <tr><td>Column level</td><td>Specific sensitive columns; protects from DB admins</td><td>pgcrypto, application-level encryption</td></tr>
+        <tr><td>Application level</td><td>Data encrypted before it ever reaches DB</td><td>AES-256 in application code; DB stores ciphertext</td></tr>
+      </table>
+
+      <h2>Encryption in Transit: TLS</h2>
+      <div class="code-block">-- PostgreSQL TLS configuration (postgresql.conf and pg_hba.conf):
+-- ssl = on
+-- ssl_cert_file = 'server.crt'
+-- ssl_key_file = 'server.key'
+-- ssl_ca_file = 'root.crt'  -- for mutual TLS (mTLS): verify client certs
+
+-- pg_hba.conf: require SSL for all connections:
+-- # TYPE  DATABASE  USER     ADDRESS       METHOD
+-- hostssl all       all      0.0.0.0/0     scram-sha-256
+-- (hostssl) vs (host) vs (hostnossl) — use hostssl to REQUIRE TLS
+
+-- Connection string with SSL required:
+-- postgresql://user:pass@host:5432/db?sslmode=require
+-- sslmode options:
+-- disable      = never use SSL (insecure, don't use in production)
+-- allow        = prefer SSL if available
+-- prefer       = try SSL, fall back to unencrypted
+-- require      = required, but don't verify certificate
+-- verify-ca    = require SSL + verify server certificate against CA
+-- verify-full  = require SSL + verify hostname matches certificate (strongest)
+
+-- Check if connection is using TLS:
+SELECT ssl, version, cipher, bits, client_dn
+FROM pg_stat_ssl
+WHERE pid = pg_backend_pid();
+
+-- TLS 1.3 is current standard (TLS 1.2 still acceptable; disable 1.0/1.1):
+-- ssl_min_protocol_version = 'TLSv1.2'    -- in postgresql.conf</div>
+
+      <h2>Column-Level Encryption with pgcrypto</h2>
+      <div class="code-block">-- pgcrypto: PostgreSQL extension for cryptographic functions
+CREATE EXTENSION pgcrypto;
+
+-- Symmetric encryption (AES) using pgp_sym_encrypt:
+-- Store sensitive data encrypted; only decrypt when needed
+
+-- Create table with encrypted column:
+CREATE TABLE customers (
+    id BIGSERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    email TEXT NOT NULL,
+    -- SSN stored as bytea (encrypted):
+    ssn_encrypted BYTEA,
+    -- Credit card last 4 digits stored plaintext for display; full number encrypted:
+    cc_last4 CHAR(4),
+    cc_number_encrypted BYTEA
+);
+
+-- Encrypt on insert:
+INSERT INTO customers (name, email, ssn_encrypted, cc_last4, cc_number_encrypted)
+VALUES (
+    'Alice Smith',
+    'alice@example.com',
+    pgp_sym_encrypt('123-45-6789', current_setting('app.encryption_key')),
+    '4321',
+    pgp_sym_encrypt('4111111111114321', current_setting('app.encryption_key'))
+);
+
+-- Decrypt on read (only when necessary):
+SELECT
+    id,
+    name,
+    email,
+    cc_last4,
+    pgp_sym_decrypt(ssn_encrypted, current_setting('app.encryption_key')) AS ssn
+FROM customers
+WHERE id = 1;
+
+-- Setting the encryption key per session (passed from application, not stored in DB):
+SET app.encryption_key = 'my-secret-aes-key-256-bits-long!!';
+-- IMPORTANT: Never store the encryption key in the database itself
+-- Pass it from application's secrets manager (AWS Secrets Manager, HashiCorp Vault)
+
+-- WARNING: encrypted columns cannot be indexed (encrypted values are random bytes)
+-- Searching for a customer by SSN requires: decrypt all SSNs and compare (full scan)
+-- Workaround: store a hash of the SSN for lookup (search by hash, decrypt matched row):
+ALTER TABLE customers ADD COLUMN ssn_hash BYTEA;
+UPDATE customers SET ssn_hash = digest('123-45-6789' || 'salt-constant', 'sha256');
+CREATE INDEX idx_customers_ssn_hash ON customers (ssn_hash);
+-- Lookup: WHERE ssn_hash = digest($1 || 'salt-constant', 'sha256')</div>
+
+      <h2>Asymmetric Encryption with pgcrypto</h2>
+      <div class="code-block">-- Use asymmetric (public/private key) encryption for cases where:
+-- Different parties encrypt data than decrypt it
+-- E.g., multiple services write encrypted data; only one privileged service reads it
+
+-- Generate RSA keypair (done outside database, using openssl):
+-- openssl genrsa -out private.pem 4096
+-- openssl rsa -in private.pem -pubout -out public.pem
+
+-- Encrypt with public key (any service can write):
+INSERT INTO sensitive_docs (content_encrypted)
+VALUES (pgp_pub_encrypt('secret content',
+        dearmor('-----BEGIN PGP PUBLIC KEY BLOCK-----...')));
+
+-- Decrypt with private key (only privileged service has this):
+SELECT pgp_pub_decrypt(content_encrypted,
+       dearmor('-----BEGIN PGP PRIVATE KEY BLOCK-----...'),
+       'optional-passphrase')
+FROM sensitive_docs WHERE id = 1;</div>
+
+      <h2>Transparent Data Encryption (TDE)</h2>
+      <div class="code-block">-- TDE encrypts data files at the storage layer
+-- Application and DBA interact with plaintext; encryption/decryption happens transparently
+-- Protects against: storage theft, backup file exposure, decommissioned disk recycling
+-- Does NOT protect against: logged-in DBA, application-level SQL injection, insider threats
+
+-- PostgreSQL does NOT have native TDE (as of PG16)
+-- Options:
+-- 1. OS-level disk encryption (LUKS on Linux):
+--    encrypt → /var/lib/postgresql → decrypted on read by OS
+--    Key unlocked at boot; data files on disk are ciphertext
+
+-- 2. Enterprise distributions: EDB Postgres Advanced Server, Percona, pgaudit have TDE-like features
+
+-- 3. Tablespace encryption: HW Security Module (HSM) integration
+
+-- AWS RDS for PostgreSQL: at-rest encryption using AES-256
+-- Enabled at cluster creation using a KMS key
+-- Encrypts: data files, WAL logs, backups, snapshots, replicas
+-- Key rotation: AWS KMS key can be rotated; RDS handles transparent re-encryption
+
+-- Azure PostgreSQL Flexible Server: customer-managed key via Azure Key Vault
+-- Google Cloud SQL: Google-managed keys + customer-managed key option (CMEK)
+
+-- Choosing TDE vs column-level encryption:
+-- TDE: broad protection, low overhead, simple key management, no schema changes
+-- Column-level: fine-grained, protects from DBA/sysadmin, searchability limited, complex
+-- For compliance (PCI-DSS, HIPAA): TDE + column-level for highest-risk fields (PAN, PHI)</div>
+
+      <h2>Data Masking and Anonymization</h2>
+      <div class="code-block">-- Data masking: replace real PII with realistic but fake data
+-- Used for: development/test databases, analytics exports, third-party integrations
+
+-- Static masking: permanent replacement in a copy of the database
+-- Run once when creating test/staging database from production backup
+
+-- Dynamic masking: mask data on-the-fly for specific users or roles
+-- Real data in DB; masked data shown to low-privilege roles
+
+-- PostgreSQL dynamic masking with Row-Level Security or views:
+CREATE VIEW customers_masked AS
+SELECT
+    id,
+    LEFT(name, 1) || '***' AS name,
+    -- Mask email: show domain, hide local part
+    REPEAT('*', LENGTH(SPLIT_PART(email, '@', 1))) || '@' || SPLIT_PART(email,'@',2) AS email,
+    -- Keep country for analytics
+    country,
+    -- Always show NULL for SSN to non-privileged users:
+    NULL::TEXT AS ssn
+FROM customers;
+
+GRANT SELECT ON customers_masked TO analytics_role;
+REVOKE SELECT ON customers FROM analytics_role;
+-- analytics_role always sees masked data; never sees real PII
+
+-- Tokenization: replace real value with a random token; store mapping in separate system
+-- Token: '4e5f6a-7b8c9d' → Real CCN: '4111111111114321'
+-- Token vault can be in separate, highly secured service (PCI scope isolation)
+-- Main DB stores only tokens; token vault is separate system with its own access controls
+
+-- Anonymization (irreversible masking for data exports):
+-- Full name → random first name from pool + masked surname
+-- Date of birth → keep month/year, replace day with 01
+-- Free-form text → PII redacted using regex or NLP (AWS Comprehend, spaCy)</div>
+
+      <h2>Key Management Best Practices</h2>
+      <div class="code-block">-- The golden rule: never store encryption keys in the same system as encrypted data
+-- If attacker gets DB access + key, encryption provides zero protection
+
+-- Key hierarchy (envelope encryption):
+-- Data Encryption Key (DEK): unique per record or per table
+-- Key Encryption Key (KEK): encrypts DEKs; stored in secrets manager
+-- Master Key: stored in HSM or KMS; encrypts KEKs
+
+-- AWS KMS envelope encryption pattern:
+-- 1. App calls KMS GenerateDataKey → returns {plaintext_key, encrypted_key_blob}
+-- 2. App encrypts data with plaintext_key
+-- 3. Stores encrypted_key_blob alongside encrypted data in DB
+-- 4. On decrypt: calls KMS Decrypt with encrypted_key_blob → gets plaintext_key back
+-- 5. Decrypts data with plaintext_key
+-- KMS key never leaves KMS; encrypted_key_blob is useless without KMS access
+
+-- Key rotation:
+-- Automatic: rotate KEK in KMS annually (AWS KMS auto-rotation supported)
+-- Manual: re-encrypt all DEKs with new KEK (KEK rotation does NOT require re-encrypting data)
+-- For column-level encryption: re-encryption requires reading + re-encrypting all rows
+
+-- Secrets in application:
+-- Never hardcode encryption keys in source code or config files
+-- Use: AWS Secrets Manager, HashiCorp Vault, Kubernetes Secrets (encrypted etcd)
+-- Inject at runtime via environment variable or mounted secret file</div>
+
+      <div class="danger-box">
+        <strong>Common encryption anti-patterns:</strong>
+        <ul>
+          <li>Storing the encryption key in the database in a "config" table — defeats the purpose entirely</li>
+          <li>Using ECB mode for AES — identical plaintexts produce identical ciphertext (patterns visible)</li>
+          <li>Using MD5 or SHA1 for password hashing — use bcrypt, scrypt, or Argon2 for passwords</li>
+          <li>Encrypting columns that need to be searchable without a search hash — results in full table scans</li>
+          <li>Using TLS 1.0/1.1 connections — have known vulnerabilities; enforce TLS 1.2+</li>
+        </ul>
+      </div>
+
+      <h2>Summary</h2>
+      <ul>
+        <li>Encrypt in transit with TLS; use <code>sslmode=verify-full</code> in production connection strings</li>
+        <li>TDE protects data files from physical access; does not protect against authorized DB access</li>
+        <li>Column-level encryption (pgcrypto AES) protects from DBAs; loses indexability on encrypted columns</li>
+        <li>Use search hash (SHA-256 + salt) alongside encrypted column to enable lookup without decrypting everything</li>
+        <li>Envelope encryption via AWS KMS: per-row data keys encrypted by a master key that never leaves KMS</li>
+        <li>Data masking handles PII in non-production environments; tokenization separates sensitive data from its token</li>
+      </ul>
+    </article>
+  </main>
+
+  <footer class="page-footer">
+    <p>Part of the DBMS Series — <a href="/articles.html">View all articles</a></p>
+  </footer>
+</body>
+</html>

@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>Database Scaling: Vertical, Horizontal, Read Replicas and Connection Pooling | Mudit Gupta</title>
+  <meta name="description" content="Scaling PostgreSQL and relational databases: vertical scaling limits, horizontal read replicas, write scaling patterns, PgBouncer modes, ProxySQL, and read/write splitting." />
+  <link rel="stylesheet" href="/assets/css/articles.css" />
+  <style>
+    .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
+    .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; color: #1a1a1a; }
+    .article-content h3 { margin-top: 1.5rem; margin-bottom: 0.75rem; color: #1a1a1a; }
+    .article-content p { margin-bottom: 1rem; color: #333; }
+    .article-content ul, .article-content ol { margin-left: 2rem; margin-bottom: 1rem; }
+    .article-content li { margin-bottom: 0.5rem; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; white-space: pre; margin-bottom: 1rem; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    table th, table td { border: 1px solid #ddd; padding: 0.75rem; text-align: left; }
+    table th { background: #f0f0f0; font-weight: 600; }
+    .note-box { background: #fff8e1; border-left: 4px solid #f9a825; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .tip-box { background: #e8f5e9; border-left: 4px solid #43a047; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .danger-box { background: #ffebee; border-left: 4px solid #e53935; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a href="/" class="home-link">Mudit Gupta</a>
+      <div class="topbar-actions">
+        <a href="/articles.html" class="btn btn-outline">Articles</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <article class="article-content">
+      <p class="kicker">DBMS Series | Part 044</p>
+      <h1>Database Scaling: Vertical, Horizontal, Read Replicas and Connection Pooling</h1>
+      <p class="meta">Architecture | 24 min read</p>
+
+      <p>
+        Database scaling is often the last bottleneck in a growing system. Application
+        servers are stateless and horizontally scalable; databases carry all the state and
+        require careful strategies. The right approach depends on your workload: is it
+        read-heavy, write-heavy, or both?
+      </p>
+
+      <h2>Understanding Your Bottleneck First</h2>
+      <table>
+        <tr><th>Bottleneck Type</th><th>Symptoms</th><th>Solution</th></tr>
+        <tr><td>CPU-bound</td><td>High CPU on DB server; slow complex queries</td><td>Vertical scale or query optimization</td></tr>
+        <tr><td>Memory-bound</td><td>High disk I/O; cache hit ratio low (&lt;95%)</td><td>More RAM (vertical); increase shared_buffers</td></tr>
+        <tr><td>I/O-bound</td><td>High disk wait time; checkpoint stalls</td><td>Faster storage (NVMe); more IOPS</td></tr>
+        <tr><td>Read-heavy</td><td>Primary under load from read queries</td><td>Read replicas; caching layer</td></tr>
+        <tr><td>Write-heavy</td><td>WAL generation rate high; replication lag</td><td>Sharding; write batching; write-optimized schema</td></tr>
+        <tr><td>Connection-bound</td><td>Connection count exhausted; pg_stat_activity full</td><td>Connection pooling (PgBouncer)</td></tr>
+      </table>
+
+      <h2>Vertical Scaling</h2>
+      <div class="code-block">-- Vertical scaling (scale up): give the existing server more CPU, RAM, faster storage
+-- Simplest approach; no application changes needed
+-- Limits: most cloud instances top out at ~400 vCPU and ~24TB RAM (AWS x2iedn.32xlarge)
+-- Cost: exponentials diminish returns (2x price ≠ 2x performance)
+
+-- When vertical scaling helps most:
+-- 1. Shared_buffers too small → increase RAM, increase shared_buffers
+-- 2. CPU bottleneck on complex analytical queries → more cores for parallel query
+-- 3. I/O throughput limit → switch from HDD → SSD → NVMe → io2 Block Express
+
+-- Amazon Aurora trick: "serverless" vertical scaling for variable workloads
+-- Aurora Serverless v2: automatically scales CPU/RAM from min to max ACU
+-- Good for dev/test environments; prod needs steady capacity for predictability
+
+-- Example: PostgreSQL scaling journey for an order management system
+-- Stage 1 (0-1M orders/day): db.t3.medium, 2 vCPU, 4GB RAM, 100GB gp2
+-- Stage 2 (1-10M orders/day): db.r6g.2xlarge, 8 vCPU, 64GB RAM, 1TB gp3
+-- Stage 3 (10M+ orders/day): read replicas + connection pooling + caching
+-- Stage 4 (100M+ orders/day): sharding or Aurora cluster</div>
+
+      <h2>Read Replicas</h2>
+      <div class="code-block">-- PostgreSQL streaming replication: primary streams WAL to one or more standbys
+-- Standbys replay WAL and stay in sync (usually < 100ms replication lag)
+-- Standbys serve read-only queries: SELECT, analytics, reports, search
+
+-- Why read replicas help:
+-- Analytics query scans 100M rows for 30 seconds → on primary: locks, CPU, I/O
+-- On read replica: same work but doesn't impact primary write path
+
+-- Setting up a read replica (simplified):
+-- On primary, postgresql.conf:
+-- wal_level = replica
+-- max_wal_senders = 5       -- allow up to 5 replicas to connect
+-- max_replication_slots = 5
+
+-- On standby:
+-- pg_basebackup -h primary-host -U replicator -D /var/lib/postgresql/data --wal-method=stream
+-- postgresql.conf: hot_standby = on   -- allow reads on standby
+-- postgresql.auto.conf: primary_conninfo = 'host=primary-host user=replicator password=...'
+
+-- Check replication status on primary:
+SELECT
+    pid,
+    application_name,
+    state,           -- 'streaming' = live replication
+    sent_lsn,
+    write_lsn,
+    flush_lsn,
+    replay_lsn,
+    (sent_lsn - replay_lsn) AS replication_lag_bytes
+FROM pg_stat_replication;
+
+-- Check lag on replica:
+SELECT
+    now() - pg_last_xact_replay_timestamp() AS replication_lag;
+
+-- Application read/write splitting:
+-- Option 1: Two separate connection pools in application
+db_write = create_pool(host="primary:5432")
+db_read  = create_pool(host="replica:5432")
+
+def get_order(order_id):
+    return db_read.query("SELECT * FROM orders WHERE id = %s", [order_id])
+
+def create_order(data):
+    return db_write.execute("INSERT INTO orders ...", data)
+-- Downside: application must be aware of replica lag for read-your-own-writes
+
+-- Option 2: Use a proxy that routes automatically (pgpool-II, HAProxy)
+-- Writes → primary; Reads → replica(s) automatically</div>
+
+      <h2>Read-Your-Writes Consistency</h2>
+      <div class="code-block">-- Problem: User inserts a row, then immediately reads from replica
+-- Replica may not have replicated the new row yet → user sees stale data
+-- This is the most common bug when introducing read replicas
+
+-- Solution 1: Read from primary for queries that must see own writes
+-- (default behavior when read replica is only for background/analytics reads)
+
+-- Solution 2: Synchronous replication for critical replicas
+-- postgresql.conf: synchronous_standby_names = 'replica1'
+-- COMMIT on primary waits until replica1 has confirmed it wrote to disk
+-- RPO = 0 (zero data loss); RTO = replica1 must be up or writes block
+-- Performance cost: each commit waits for replica roundtrip (~1-5ms extra)
+
+-- Solution 3: Track WAL LSN for reads-after-own-writes
+-- After write, note current LSN: SELECT pg_current_wal_lsn();
+-- Store LSN in application session (e.g., JWT, Redis)
+-- Before reading from replica: check pg_last_replay_lsn() >= stored LSN
+-- If replica is behind: either wait, or route to primary
+
+-- Solution 4: Route all writes + 1 subsequent read to primary
+-- Less granular but simple: user is always on primary for a short window after write
+
+-- AWS Aurora: wait_for_sync token
+-- After write, Aurora returns a consistency token
+-- Query replica: pass token; replica waits until it has applied changes up to that token
+-- Enables replicas without application-level LSN tracking</div>
+
+      <h2>PgBouncer Connection Pooling Deep Dive</h2>
+      <div class="code-block">-- Three pooling modes explained with concrete examples:
+
+-- Session pooling (server conn held for entire client session):
+-- App opens connection → PgBouncer assigns server connection
+-- App closes connection → server connection returned to pool
+-- Net benefit: limits max server connections without any SQL compatibility issues
+-- Use when: application uses SET commands, LISTEN/NOTIFY, or prepared statements
+
+-- Transaction pooling (server conn held only during transaction):
+-- App opens connection → no server connection assigned yet
+-- App starts transaction → server connection assigned
+-- App commits/rollbacks → server connection returned to pool
+-- 1000 clients, 50 active transactions → need only 50 server connections
+-- Use when: application uses autocommit or short transactions (most OLTP apps)
+-- Limitations: cannot use SET for session variables, LISTEN, advisory locks
+-- Fix: use SET LOCAL (scoped to transaction), or pass session state per transaction
+
+-- Statement pooling (server conn released after every statement):
+-- Extremely aggressive; rarely used
+-- Incompatible with multi-statement transactions
+
+-- PgBouncer admin console (connect to port 6432 as pgbouncer user):
+SHOW POOLS;
+-- database | user | cl_active | cl_waiting | sv_active | sv_idle | sv_used | maxwait
+-- mydb     | app  | 47        | 3          | 50        | 0       | 0       | 0.12
+
+-- Key metrics to watch:
+-- cl_waiting > 0 and maxwait rising → increase pool_size or investigate slow queries
+-- sv_idle high → pool oversized; reduce for less memory overhead
+-- avg_query time rising → application issue, not pooler issue
+
+-- Pooler tuning:
+max_client_conn = 2000     -- max app connections PgBouncer accepts
+default_pool_size = 100    -- server connections per db/user pair
+reserve_pool_size = 10     -- extra connections used when pool is full (temporary spike)
+reserve_pool_timeout = 5.0 -- wait this long before using reserve pool</div>
+
+      <h2>Write Scaling Patterns</h2>
+      <div class="code-block">-- Write bottlenecks are harder to solve than read bottlenecks
+
+-- Pattern 1: Write buffering / batching
+-- Instead of one INSERT per event: buffer 1000 events, INSERT in one statement
+-- Batch INSERT 1000 rows: 1 transaction, 1 WAL flush, 1 fsync
+-- vs 1000 individual INSERTs: 1000 transactions, 1000 WAL flushes
+-- 100-1000x reduction in fsync load for event/log data
+
+-- Pattern 2: COPY for bulk loads
+COPY orders FROM '/tmp/orders.csv' WITH (FORMAT csv, HEADER true);
+-- COPY is the fastest way to load data; bypasses row-level triggers if needed
+-- Much faster than repeated INSERTs for bulk data migration
+
+-- Pattern 3: Unlogged tables for ephemeral data
+CREATE UNLOGGED TABLE session_events (
+    session_id TEXT,
+    event_type TEXT,
+    occurred_at TIMESTAMPTZ
+);
+-- No WAL generated → 5-10x faster writes
+-- Data LOST on crash; acceptable for: temp tables, event staging, cache tables
+-- Flush to main table periodically
+
+-- Pattern 4: Partitioning + archiving
+-- Move old data to archive tables (cold storage)
+-- Hot partition (current month) stays small → fast writes and scans
+-- Archive partitions: rarely written, can be compressed, moved to slower storage
+
+-- Pattern 5: Sharding for write-heavy workloads
+-- Discussed in dedicated sharding article (027)
+-- Citus extension for PostgreSQL: distributed PostgreSQL
+-- Each shard is a separate PostgreSQL instance handling its slice of data</div>
+
+      <div class="tip-box">
+        <strong>Scaling decision guide:</strong>
+        <ul>
+          <li>First: profile to identify actual bottleneck (CPU, I/O, memory, connections, or queries)</li>
+          <li>Second: optimize queries and indexes — 10x improvement before any infrastructure change</li>
+          <li>Third: add caching layer (Redis) — eliminates reads for popular content entirely</li>
+          <li>Fourth: add read replicas for remaining read load from analytics/reporting</li>
+          <li>Fifth: add PgBouncer — delays connection exhaustion significantly</li>
+          <li>Sixth: vertical scale the primary (more RAM, faster storage)</li>
+          <li>Last resort: sharding — massively complex, only when others are exhausted</li>
+        </ul>
+      </div>
+
+      <h2>Summary</h2>
+      <ul>
+        <li>Identify the actual bottleneck type before scaling: read, write, memory, I/O, or connections</li>
+        <li>Vertical scaling is simplest; has practical limits at high load</li>
+        <li>Read replicas distribute read load; replicas serve SELECT queries with replication lag</li>
+        <li>Read-your-own-writes: route writes + immediate subsequent reads to primary, or track LSN</li>
+        <li>PgBouncer transaction mode: 1000 app connections with 50 server connections — essential for high-connection OLTP</li>
+        <li>Write scaling: batch inserts, COPY for bulk loads, unlogged tables for ephemeral data, partitioning for hot/cold separation</li>
+      </ul>
+    </article>
+  </main>
+
+  <footer class="page-footer">
+    <p>Part of the DBMS Series — <a href="/articles.html">View all articles</a></p>
+  </footer>
+</body>
+</html>

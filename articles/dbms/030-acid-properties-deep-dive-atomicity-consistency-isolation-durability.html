@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>ACID Properties Deep Dive: Atomicity, Consistency, Isolation and Durability | Mudit Gupta</title>
+  <meta name="description" content="ACID properties explained with real-world database examples: rollback mechanics, constraint checking, isolation anomalies, write-ahead logging for durability, and where each property is enforced." />
+  <link rel="stylesheet" href="/assets/css/articles.css" />
+  <style>
+    .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
+    .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; color: #1a1a1a; }
+    .article-content h3 { margin-top: 1.5rem; margin-bottom: 0.75rem; color: #1a1a1a; }
+    .article-content p { margin-bottom: 1rem; color: #333; }
+    .article-content ul, .article-content ol { margin-left: 2rem; margin-bottom: 1rem; }
+    .article-content li { margin-bottom: 0.5rem; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; white-space: pre; margin-bottom: 1rem; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    table th, table td { border: 1px solid #ddd; padding: 0.75rem; text-align: left; }
+    table th { background: #f0f0f0; font-weight: 600; }
+    .note-box { background: #fff8e1; border-left: 4px solid #f9a825; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .tip-box { background: #e8f5e9; border-left: 4px solid #43a047; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .danger-box { background: #ffebee; border-left: 4px solid #e53935; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a href="/" class="home-link">Mudit Gupta</a>
+      <div class="topbar-actions">
+        <a href="/articles.html" class="btn btn-outline">Articles</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <article class="article-content">
+      <p class="kicker">DBMS Series | Part 030</p>
+      <h1>ACID Properties Deep Dive: Atomicity, Consistency, Isolation and Durability</h1>
+      <p class="meta">Transactions | 28 min read</p>
+
+      <p>
+        ACID is not just four words on a slide — each property has specific mechanisms inside the
+        database engine enforcing it. Understanding <em>how</em> each is realized explains why
+        transactions are sometimes slow, why some databases offer "relaxed" ACID, and which
+        scenarios genuinely require each guarantee.
+      </p>
+
+      <h2>Atomicity: All or Nothing</h2>
+      <p>
+        Atomicity guarantees that either all operations in a transaction succeed and persist,
+        or none of them do. There is no state where half the operations are committed.
+      </p>
+      <div class="code-block">-- Classic bank transfer: MUST be atomic
+BEGIN;
+    UPDATE accounts SET balance = balance - 500 WHERE account_id = 1001;
+    UPDATE accounts SET balance = balance + 500 WHERE account_id = 1002;
+COMMIT;
+
+-- If the second UPDATE fails (account 1002 doesn't exist, CHECK constraint fails),
+-- the database ROLLS BACK both updates — account 1001 gets its money back
+-- This is atomicity: partial writes are never visible or persisted
+
+-- What happens at the storage level (PostgreSQL example):
+-- 1. Both UPDATEs write new row versions to the table and WAL (Write-Ahead Log)
+-- 2. Rows are marked with the current transaction ID (xid) as "in-progress"
+-- 3. On COMMIT: WAL commit record is written to disk; rows are now visible
+-- 4. On ROLLBACK (or crash): rows marked with this xid remain invisible to others
+--    The original row versions are still in the heap (MVCC); no undo needed
+
+-- SAVEPOINT: partial rollback within a transaction
+BEGIN;
+    INSERT INTO orders (id, total) VALUES (100, 299.00);
+    SAVEPOINT order_created;
+    
+    INSERT INTO order_items (order_id, product_id) VALUES (100, 999);
+    -- If product 999 doesn't exist and you get FK violation:
+    ROLLBACK TO SAVEPOINT order_created;
+    -- Now only the order insert is rolled back to; the outer transaction continues
+    INSERT INTO order_items (order_id, product_id) VALUES (100, 888);
+COMMIT;</div>
+
+      <h3>How Rollback Works</h3>
+      <div class="code-block">-- PostgreSQL uses MVCC (Multi-Version Concurrency Control)
+-- Each row version has: xmin (transaction that created it), xmax (transaction that deleted it)
+
+-- Before transaction T1:
+-- Row version: {id:1001, balance:5000, xmin:100, xmax:0}  (visible: xmax=0 means active)
+
+-- During T1 (UPDATE balance = balance - 500):
+-- New row version written: {id:1001, balance:4500, xmin:T1, xmax:0}
+-- Old row version marked:  {id:1001, balance:5000, xmin:100, xmax:T1}
+
+-- On ROLLBACK of T1:
+-- T1's new row version is "invisible" (xmin = T1 = aborted)
+-- Old row version is visible again (xmax = T1 = aborted → effectively xmax still 0)
+-- No undo record needed — MVCC keeps both versions simultaneously
+
+-- Compare with Oracle/MySQL InnoDB: uses undo log (actual undo records to reverse changes)
+-- PostgreSQL: uses version-based approach (dead tuples cleaned up by VACUUM)</div>
+
+      <h2>Consistency: Valid State Transitions Only</h2>
+      <p>
+        Consistency means the database transitions from one valid state to another valid state.
+        "Valid" is defined by all constraints: PRIMARY KEY, FOREIGN KEY, UNIQUE, CHECK, NOT NULL,
+        triggers, and application-level invariants.
+      </p>
+      <div class="code-block">-- Constraints enforcing consistency:
+
+-- Referential integrity (FK):
+INSERT INTO order_items (order_id, product_id, quantity)
+VALUES (100, 9999, 1);
+-- ERROR if product_id 9999 doesn't exist in Products table
+-- FK constraint prevents inconsistency (orphaned order items)
+
+-- Check constraints:
+ALTER TABLE products ADD CONSTRAINT price_positive CHECK (price > 0);
+UPDATE products SET price = -10 WHERE id = 101;
+-- ERROR: violates check constraint "price_positive"
+
+-- Unique constraints:
+ALTER TABLE customers ADD CONSTRAINT unique_email UNIQUE (email);
+INSERT INTO customers (email) VALUES ('priya@example.com');
+-- ERROR if that email already exists
+
+-- Deferred constraint checking (within transaction):
+-- Default: constraints checked after EACH statement
+-- DEFERRABLE: check at COMMIT time only
+-- Useful for: inserting rows that temporarily violate constraints during batch load
+ALTER TABLE order_items ADD CONSTRAINT fk_order 
+    FOREIGN KEY (order_id) REFERENCES orders(id)
+    DEFERRABLE INITIALLY DEFERRED;
+-- Now you can INSERT order_items before the parent order in the same transaction
+-- FK is checked at COMMIT time, not per-statement</div>
+
+      <div class="note-box">
+        <strong>Important distinction:</strong> The "C" in ACID is NOT the same as the "C" in CAP.
+        ACID consistency means "all database constraints are satisfied."
+        CAP consistency means "all nodes see the same data at the same time" (linearizability).
+        These are completely different properties.
+      </div>
+
+      <h2>Isolation: Concurrent Transparency</h2>
+      <p>
+        Isolation means concurrent transactions execute as if they ran serially — one after the
+        other. But full isolation is expensive; databases offer isolation levels that trade
+        correctness for performance.
+      </p>
+      <div class="code-block">-- Four isolation anomalies (described in SQL-92 standard):
+
+-- 1. DIRTY READ: reading uncommitted changes from another transaction
+-- T1: UPDATE balance = 4500 (not committed yet)
+-- T2: SELECT balance → reads 4500  ← dirty (uncommitted)
+-- T1 ROLLBACKs
+-- T2 made a decision based on data that never existed
+
+-- 2. NON-REPEATABLE READ: same row read twice, gets different value
+-- T1: SELECT balance → 5000
+-- T2: UPDATE balance = 4500; COMMIT
+-- T1: SELECT balance → 4500  ← different! T1's view of the row changed mid-transaction
+
+-- 3. PHANTOM READ: same query run twice returns different rows
+-- T1: SELECT * FROM orders WHERE amount > 1000 → returns 5 rows
+-- T2: INSERT INTO orders (amount) VALUES (2000); COMMIT
+-- T1: SELECT * FROM orders WHERE amount > 1000 → returns 6 rows ← phantom inserted by T2
+
+-- 4. READ SKEW (lost update via skew):
+-- T1 reads balance_A=500, balance_B=500 (total=1000)
+-- T2 transfers 200 from B to A: balance_A=700, balance_B=300; COMMITs
+-- T1 reads balance_B=300 (already updated, reads 300)
+-- T1 writes balance_B = 300 - 100 = 200 (based on stale balance_A read)
+-- Total money = 700 + 200 = 900 ← money lost! (consistency violated)</div>
+
+      <h3>Isolation Levels</h3>
+      <table>
+        <tr><th>Level</th><th>Dirty Read</th><th>Non-Repeatable</th><th>Phantom</th><th>Write Skew</th></tr>
+        <tr><td>READ UNCOMMITTED</td><td>Possible</td><td>Possible</td><td>Possible</td><td>Possible</td></tr>
+        <tr><td>READ COMMITTED</td><td>Prevented</td><td>Possible</td><td>Possible</td><td>Possible</td></tr>
+        <tr><td>REPEATABLE READ</td><td>Prevented</td><td>Prevented</td><td>Possible (SQL-92) / Prevented (PG)</td><td>Possible</td></tr>
+        <tr><td>SERIALIZABLE</td><td>Prevented</td><td>Prevented</td><td>Prevented</td><td>Prevented</td></tr>
+      </table>
+      <div class="code-block">-- Set isolation level for a transaction:
+BEGIN ISOLATION LEVEL SERIALIZABLE;
+-- or
+BEGIN;
+SET TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+-- PostgreSQL default: READ COMMITTED (each statement sees latest commits)
+-- Financial applications: use REPEATABLE READ or SERIALIZABLE
+-- Read-only analytics: READ COMMITTED is fine</div>
+
+      <h2>Durability: Survived Crashes</h2>
+      <p>
+        A committed transaction must survive any subsequent crash: power loss, OS crash, disk
+        controller failure. Durability is enforced by the Write-Ahead Log (WAL).
+      </p>
+      <div class="code-block">-- Write-Ahead Log (WAL) protocol:
+-- Rule: A log record MUST be written to durable storage before the data page is modified
+-- On COMMIT:
+--   1. WAL commit record written to disk (fsync)
+--   2. Only then is the commit acknowledged to the client
+--   3. Data pages may still be in memory (will be flushed later)
+--
+-- On crash recovery:
+--   1. Find last checkpoint in WAL
+--   2. REDO: replay all WAL records after checkpoint (re-apply committed changes)
+--   3. UNDO: find uncommitted transactions at crash time, roll them back
+--
+-- This guarantees: any committed transaction's changes are in the WAL
+-- → will be reapplied on recovery even if data pages were not yet flushed to disk
+
+-- PostgreSQL WAL configuration:
+synchronous_commit = on    -- fsync WAL on every COMMIT (durable, ~1ms extra latency)
+synchronous_commit = off   -- async commit (fast, but ~200ms window of potential loss)
+                            -- safe for: logging, analytics inserts, idempotent operations
+                            -- NOT safe for: financial transactions, unique data
+
+fsync = on               -- NEVER disable in production — losing this means no durability
+wal_writer_delay = 200ms -- how often WAL writer flushes (when not full)</div>
+
+      <div class="danger-box">
+        <strong>Never disable fsync in production.</strong> Setting <code>fsync=off</code> in
+        PostgreSQL disables WAL durability guarantees. After a crash, your database could be
+        in an unrecoverable corrupt state. Some benchmarks show this gives 10x writes/second,
+        but this is for throwaway test data only. At least two major PostgreSQL hosting providers
+        had production outages with data corruption from this mistake.
+      </div>
+
+      <h2>ACID in Distributed Systems</h2>
+      <div class="code-block">-- Single-server ACID is well-understood; distributed ACID is hard
+-- Key challenges:
+-- Atomicity across nodes: use 2PC (Two-Phase Commit) or Saga
+-- Consistency across nodes: hard — no global constraint checking
+-- Isolation across nodes: MVCC must be coordinated (vector clocks, Lamport timestamps)
+-- Durability across nodes: replication + WAL on each node
+
+-- Google Spanner & CockroachDB: distributed ACID via Raft + TrueTime
+-- Each shard/range is a Raft group; cross-shard transactions use 2PC between Raft groups
+-- TrueTime (Spanner) / hybrid logical clocks (CockroachDB) provide consistent global time
+-- Cost: higher latency (cross-DC round trips), but full ACID across the planet</div>
+
+      <h2>Summary</h2>
+      <ul>
+        <li><strong>Atomicity:</strong> MVCC (PostgreSQL) or undo logs (InnoDB) ensure all-or-nothing semantics</li>
+        <li><strong>Consistency:</strong> Enforced by FK, CHECK, UNIQUE, NOT NULL constraints; checked at commit or per-statement depending on DEFERRABLE setting</li>
+        <li><strong>Isolation:</strong> Four levels (RC, RR, Serializable); each prevents a subset of anomalies; PostgreSQL default is READ COMMITTED</li>
+        <li><strong>Durability:</strong> Write-Ahead Log with fsync ensures committed data survives crashes; never disable fsync in production</li>
+        <li>ACID "C" ≠ CAP "C" — different definitions from different contexts</li>
+      </ul>
+    </article>
+  </main>
+
+  <footer class="page-footer">
+    <p>Part of the DBMS Series — <a href="/articles.html">View all articles</a></p>
+  </footer>
+</body>
+</html>

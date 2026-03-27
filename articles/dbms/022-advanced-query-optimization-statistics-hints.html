@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>Advanced Query Optimization: Statistics, Hints and Parallel Query | Mudit Gupta</title>
+  <meta name="description" content="RBO vs CBO, planner statistics, multi-column statistics, join order search space, CTEs as optimization fences, query hints, and parallel query execution." />
+  <link rel="stylesheet" href="/assets/css/articles.css" />
+  <style>
+    .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
+    .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; color: #1a1a1a; }
+    .article-content h3 { margin-top: 1.5rem; margin-bottom: 0.75rem; color: #1a1a1a; }
+    .article-content p { margin-bottom: 1rem; color: #333; }
+    .article-content ul, .article-content ol { margin-left: 2rem; margin-bottom: 1rem; }
+    .article-content li { margin-bottom: 0.5rem; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; white-space: pre; margin-bottom: 1rem; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    table th, table td { border: 1px solid #ddd; padding: 0.75rem; text-align: left; }
+    table th { background: #f0f0f0; font-weight: 600; }
+    .note-box { background: #fff8e1; border-left: 4px solid #f9a825; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .tip-box { background: #e8f5e9; border-left: 4px solid #43a047; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .danger-box { background: #ffebee; border-left: 4px solid #e53935; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a href="/" class="home-link">Mudit Gupta</a>
+      <div class="topbar-actions">
+        <a href="/articles.html" class="btn btn-outline">Articles</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <article class="article-content">
+      <p class="kicker">DBMS Series | Part 022</p>
+      <h1>Advanced Query Optimization: Statistics, Hints and Parallel Query</h1>
+      <p class="meta">Query Internals | 25 min read</p>
+
+      <p>
+        Modern databases use cost-based optimizers that rely on statistical models to choose plans.
+        When these statistics are stale, skewed, or missing, the optimizer makes poor choices.
+        Understanding how statistics work, where they fail, and how to guide the optimizer is
+        essential for production database tuning.
+      </p>
+
+      <h2>RBO vs CBO: Two Eras of Optimization</h2>
+      <table>
+        <tr><th></th><th>Rule-Based Optimizer (RBO)</th><th>Cost-Based Optimizer (CBO)</th></tr>
+        <tr><td>Decision basis</td><td>Fixed priority rules</td><td>Estimated row counts × algorithm costs</td></tr>
+        <tr><td>Uses statistics?</td><td>No</td><td>Yes — deeply dependent</td></tr>
+        <tr><td>Index preference</td><td>Always prefers index scan</td><td>May choose seq scan if selectivity is low</td></tr>
+        <tr><td>Modern usage</td><td>Legacy (Oracle pre-8i, some systems)</td><td>PostgreSQL, MySQL 8+, SQL Server, Oracle 9i+</td></tr>
+      </table>
+      <p>
+        RBO predictability was appealing (you knew it would always use the index), but it produced
+        terrible plans for queries where a full scan was faster. CBO is smarter but depends on
+        accurate statistics.
+      </p>
+
+      <h2>What Planner Statistics Actually Are</h2>
+      <div class="code-block">-- PostgreSQL: statistics visible in pg_stats
+SELECT tablename, attname, null_frac, avg_width, n_distinct,
+       most_common_vals, most_common_freqs, histogram_bounds, correlation
+FROM pg_stats
+WHERE tablename = 'orders' AND attname = 'status';
+
+-- null_frac     : 0.02 means 2% of rows are NULL
+-- avg_width     : average byte width of this column's value
+-- n_distinct    : -0.05 means ~5% of rows have distinct values (negative = fraction)
+--                  50 means exactly 50 distinct values
+-- most_common_vals  : ['pending','delivered','cancelled']
+-- most_common_freqs : [0.12, 0.75, 0.13]  — 75% are 'delivered'
+-- histogram_bounds  : bucket boundaries for non-common values
+-- correlation  : 1.0 = perfectly correlated with physical storage order
+--               -1.0 = reverse correlated; 0.0 = random</div>
+
+      <h3>How the Optimizer Uses These</h3>
+      <div class="code-block">-- Selectivity estimate for: status = 'delivered'
+-- Found in most_common_vals → use most_common_freqs[1] = 0.75
+-- Estimated rows = 0.75 × total_rows
+
+-- Selectivity for: status = 'processing'  (not in MCV)
+-- MCV covers: 0.12 + 0.75 + 0.13 = 1.00
+-- Wait, that's 100% — but actually MCVs don't always cover everything
+-- Real example: 0.85 coverage → remaining fraction = 0.15
+-- Non-MCV values split equally over histogram buckets
+
+-- Selectivity for range: order_date BETWEEN '2024-01-01' AND '2024-03-31'
+-- Uses histogram_bounds to estimate fraction of rows in that range
+-- histogram_bounds might be: ['2023-01-01','2023-07-01','2024-01-01','2024-07-01','2025-01-01']
+-- 2024-01-01 to 2024-03-31 covers ~1/4 of the 3rd bucket → selectivity ≈ 0.125</div>
+
+      <h2>Multi-Column Statistics: The Most Underused Feature</h2>
+      <p>
+        The optimizer assumes column independence by default. If two columns are correlated
+        (e.g., city and region), its estimates will be wildly off.
+      </p>
+      <div class="code-block">-- Problem: underestimation due to assumed independence
+-- Suppose 20% of orders are from Mumbai, 5% have status='premium_delivery'
+-- The optimizer estimates: 0.20 × 0.05 = 1% of rows match BOTH
+-- But if premium delivery is only available in Mumbai, the real answer is 5%
+-- This 5x underestimate causes the optimizer to choose a nested loop (bad)
+
+-- Solution: extended statistics on correlated columns
+CREATE STATISTICS orders_city_status (mcv, dependencies, ndistinct)
+ON city, status
+FROM orders;
+
+ANALYZE orders;  -- populate the new statistics
+
+-- Now the optimizer knows about the correlation and estimates correctly</div>
+
+      <h2>Statistics Staleness: When Plans Go Bad</h2>
+      <div class="code-block">-- Check when statistics were last updated
+SELECT schemaname, tablename, last_analyze, last_autoanalyze
+FROM pg_stat_user_tables
+WHERE tablename = 'orders';
+
+-- Check if statistics are stale:
+-- If last_analyze was weeks ago and many rows changed, stats are stale
+-- Rule of thumb: analyze when >10-20% of rows changed
+
+-- Manual analyze:
+ANALYZE orders;                     -- update stats for all columns
+ANALYZE orders(status, customer_id); -- targeted (PostgreSQL 11+)
+
+-- Increase statistics target for high-cardinality columns:
+ALTER TABLE orders ALTER COLUMN customer_id SET STATISTICS 500;
+-- Default is 100 histogram buckets; 500 gives better range estimates
+ANALYZE orders;</div>
+
+      <h3>Auto-Analyze Configuration</h3>
+      <div class="code-block">-- PostgreSQL autovacuum / autoanalyze thresholds
+-- Table is analyzed when: changed_rows > autovacuum_analyze_threshold + 
+--                          autovacuum_analyze_scale_factor × n_live_tup
+
+SHOW autovacuum_analyze_threshold;    -- default: 50 rows
+SHOW autovacuum_analyze_scale_factor; -- default: 0.2 (20% of table)
+
+-- For a 10M row table: triggers after 50 + 0.2 × 10M = 2,000,050 changes
+-- That's a LOT of change before auto-analyze fires!
+-- For large tables, set a lower scale factor:
+ALTER TABLE orders SET (autovacuum_analyze_scale_factor = 0.01);  -- 1% = 100K rows</div>
+
+      <h2>Join Order Optimization: The Exponential Problem</h2>
+      <p>
+        The number of possible join orderings grows exponentially: for <em>n</em> tables,
+        there are <em>n!</em> orderings and even more tree shapes. Optimizers use heuristics.
+      </p>
+      <div class="code-block">-- 3 tables: 6 orderings (manageable)
+-- 5 tables: 120 orderings (fast)
+-- 8 tables: 40,320 orderings (still fast)
+-- 12 tables: 479,001,600 orderings (PostgreSQL switches to genetic algorithm!)
+-- 20 tables: 2.4 × 10^18 orderings (never enumerate all of these)
+
+-- PostgreSQL switches to GEQO (genetic algorithm) at join_collapse_limit:
+SHOW join_collapse_limit;   -- default: 8
+SHOW geqo_threshold;        -- default: 12
+
+-- For queries joining many tables, help the optimizer by ordering FROM clause:
+-- Put the most selective (smallest result) joins first
+-- Use explicit JOIN ... ON instead of cross join in WHERE clause</div>
+
+      <h3>Forcing Join Order</h3>
+      <div class="code-block">-- PostgreSQL: disable join order reordering
+SET join_collapse_limit = 1;  -- now optimizer uses your FROM clause order
+SET from_collapse_limit = 1;  -- no FROM flattening either
+
+SELECT c.name, o.total, p.name
+FROM Customers c           -- start with smallest table
+JOIN Orders o ON c.customer_id = o.customer_id
+JOIN Products p ON o.product_id = p.product_id
+WHERE c.tier = 'gold';
+
+-- Reset after your session
+RESET join_collapse_limit;
+RESET from_collapse_limit;</div>
+
+      <h2>CTEs as an Optimization Fence</h2>
+      <div class="code-block">-- PostgreSQL pre-12: CTEs were ALWAYS materialized (evaluated once, stored in temp table)
+-- This prevented predicate pushdown INTO the CTE — a "fence" in the plan
+
+-- Example where this matters:
+WITH active_orders AS (
+    SELECT * FROM Orders WHERE status = 'active'
+)
+SELECT * FROM active_orders WHERE customer_id = 12345;
+
+-- Pre-12 behavior: ALL active orders fetched first, then filtered by customer_id
+-- Post-12 behavior: CTE is inlined (not materialized) → predicate pushed into CTE
+-- Result: only orders with status='active' AND customer_id=12345 fetched
+
+-- Force materialization in PostgreSQL 12+ (useful for performance isolation):
+WITH active_orders AS MATERIALIZED (
+    SELECT * FROM Orders WHERE status = 'active'
+)
+SELECT * FROM active_orders WHERE customer_id = 12345;
+
+-- Force inlining (default in PG12+, but explicit if you want to override):
+WITH active_orders AS NOT MATERIALIZED (
+    SELECT * FROM Orders WHERE status = 'active'
+)
+SELECT * FROM active_orders WHERE customer_id = 12345;</div>
+
+      <h2>The SARGable Predicate Principle</h2>
+      <p>
+        A SARGable (Search ARGument able) predicate can use an index. Non-SARGable predicates
+        force a sequential scan.
+      </p>
+      <div class="code-block">-- NOT SARGable (index on order_date cannot be used):
+WHERE YEAR(order_date) = 2024          -- function on column
+WHERE UPPER(email) = 'USER@EXAMPLE.COM' -- function on column
+WHERE order_total + 100 > 5000          -- expression on column
+WHERE CAST(customer_id AS TEXT) = '123' -- implicit cast
+
+-- SARGable equivalents:
+WHERE order_date >= '2024-01-01' AND order_date < '2025-01-01'
+WHERE email = 'user@example.com'        -- store emails lowercase consistently
+WHERE order_total > 4900
+WHERE customer_id = 123                 -- use correct type; no cast
+
+-- PostgreSQL functional indexes (workaround when function is unavoidable):
+CREATE INDEX idx_email_lower ON Customers (LOWER(email));
+WHERE LOWER(email) = 'user@example.com';  -- now uses the functional index</div>
+
+      <h2>Parallel Query Execution</h2>
+      <div class="code-block">-- PostgreSQL parallel query (available since PG9.6)
+-- Gather / Gather Merge nodes collect results from parallel workers
+
+EXPLAIN SELECT COUNT(*), SUM(total)
+FROM Orders
+WHERE order_date >= '2024-01-01';
+
+-- With parallel enabled:
+Finalize Aggregate  (cost=...)
+  ->  Gather  (cost=...) -- collects from workers
+        Workers Planned: 4
+        ->  Partial Aggregate  (cost=...)  -- each worker computes partial sum
+              ->  Parallel Seq Scan on orders  -- each worker reads a fraction
+
+-- Configuration:
+SHOW max_parallel_workers_per_gather;  -- default: 2
+SET max_parallel_workers_per_gather = 4;
+SHOW min_parallel_table_scan_size;     -- tables smaller than this: no parallelism
+SHOW parallel_tuple_cost;             -- cost of passing tuple to Gather node
+
+-- Parallel-safe functions (UDFs must be marked PARALLEL SAFE):
+CREATE FUNCTION expensive_fn(x int) RETURNS int
+    LANGUAGE sql PARALLEL SAFE AS $$ SELECT x * 2 $$;</div>
+
+      <h2>Partition Pruning</h2>
+      <div class="code-block">-- For partitioned tables, the optimizer skips irrelevant partitions entirely
+CREATE TABLE Orders (
+    order_id   BIGSERIAL,
+    order_date DATE NOT NULL,
+    total      NUMERIC
+) PARTITION BY RANGE (order_date);
+
+CREATE TABLE Orders_2024_Q1 PARTITION OF Orders 
+    FOR VALUES FROM ('2024-01-01') TO ('2024-04-01');
+CREATE TABLE Orders_2024_Q2 PARTITION OF Orders 
+    FOR VALUES FROM ('2024-04-01') TO ('2024-07-01');
+-- ... etc
+
+-- Query that benefits from partition pruning:
+SELECT SUM(total) FROM Orders WHERE order_date BETWEEN '2024-01-01' AND '2024-03-31';
+
+-- EXPLAIN shows only Orders_2024_Q1 is scanned — Q2, Q3, Q4 partitions are skipped
+-- This is "static pruning" (happens at plan time)
+
+-- Dynamic partition pruning (PostgreSQL 11+): also happens at runtime for parameterized queries
+-- Useful in prepared statements where partition key is a bind variable</div>
+
+      <div class="danger-box">
+        <strong>Common pitfall — index on expression vs column:</strong> If you store
+        <code>order_date</code> as <code>TEXT</code> and write <code>WHERE order_date > '2024-01-01'</code>,
+        the comparison uses string semantics ('2024-01-01' &lt; '2025-01-01' works, but '9' &gt; '20'
+        alphabetically). Always use proper DATE/TIMESTAMP types so the optimizer can estimate
+        cardinality correctly and range comparisons return correct results.
+      </div>
+
+      <h2>Summary</h2>
+      <ul>
+        <li>CBO chooses plans based on estimated row counts multiplied by algorithm costs</li>
+        <li>Statistics must be fresh — use ANALYZE regularly; tune autovacuum thresholds for large tables</li>
+        <li>Column independence assumption breaks for correlated columns; use CREATE STATISTICS to fix</li>
+        <li>Make predicates SARGable: avoid functions/expressions on the indexed column in WHERE</li>
+        <li>CTEs in PostgreSQL 12+ are inlined by default (no longer an optimization fence)</li>
+        <li>Parallel query handles analytical queries automatically once workers_per_gather > 1</li>
+        <li>Partitioned tables give free partition pruning when partition key is in the WHERE clause</li>
+      </ul>
+    </article>
+  </main>
+
+  <footer class="page-footer">
+    <p>Part of the DBMS Series — <a href="/articles.html">View all articles</a></p>
+  </footer>
+</body>
+</html>

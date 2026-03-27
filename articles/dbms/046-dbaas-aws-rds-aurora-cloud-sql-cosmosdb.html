@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>DBaaS: AWS RDS, Aurora, Cloud SQL, Azure SQL and CosmosDB | Mudit Gupta</title>
+  <meta name="description" content="Managed database services compared: AWS RDS, Amazon Aurora, Google Cloud SQL, Azure SQL, CosmosDB. What you gain and lose, Aurora architecture, multi-region patterns, and self-hosted vs managed decisions." />
+  <link rel="stylesheet" href="/assets/css/articles.css" />
+  <style>
+    .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
+    .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; color: #1a1a1a; }
+    .article-content h3 { margin-top: 1.5rem; margin-bottom: 0.75rem; color: #1a1a1a; }
+    .article-content p { margin-bottom: 1rem; color: #333; }
+    .article-content ul, .article-content ol { margin-left: 2rem; margin-bottom: 1rem; }
+    .article-content li { margin-bottom: 0.5rem; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; white-space: pre; margin-bottom: 1rem; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    table th, table td { border: 1px solid #ddd; padding: 0.75rem; text-align: left; }
+    table th { background: #f0f0f0; font-weight: 600; }
+    .note-box { background: #fff8e1; border-left: 4px solid #f9a825; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .tip-box { background: #e8f5e9; border-left: 4px solid #43a047; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .danger-box { background: #ffebee; border-left: 4px solid #e53935; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a href="/" class="home-link">Mudit Gupta</a>
+      <div class="topbar-actions">
+        <a href="/articles.html" class="btn btn-outline">Articles</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <article class="article-content">
+      <p class="kicker">DBMS Series | Part 046</p>
+      <h1>DBaaS: AWS RDS, Aurora, Cloud SQL, Azure SQL and CosmosDB</h1>
+      <p class="meta">Cloud | 22 min read</p>
+
+      <p>
+        Database-as-a-Service (DBaaS) means a cloud provider manages the infrastructure,
+        patching, backups, and high availability, leaving you to focus on schema design
+        and queries. This is the right choice for most teams — but it comes with real
+        trade-offs in control, cost, and portability.
+      </p>
+
+      <h2>What DBaaS Handles vs What You Still Own</h2>
+      <table>
+        <tr><th>Responsibility</th><th>Self-Hosted</th><th>DBaaS (RDS / Cloud SQL)</th></tr>
+        <tr><td>OS patching</td><td>You</td><td>Provider</td></tr>
+        <tr><td>Engine upgrades (minor)</td><td>You</td><td>Provider (can auto-apply)</td></tr>
+        <tr><td>Engine upgrades (major)</td><td>You</td><td>You (must initiate; brief downtime)</td></tr>
+        <tr><td>Automated backups</td><td>You configure</td><td>Provider (automated, PITR included)</td></tr>
+        <tr><td>Monitoring / metrics</td><td>You build</td><td>Provider (CloudWatch, Cloud Monitoring)</td></tr>
+        <tr><td>HA / failover</td><td>You build (Pacemaker, etc.)</td><td>Provider (Multi-AZ, automatic failover)</td></tr>
+        <tr><td>Disk scaling</td><td>Manual / LVM</td><td>Provider (auto-scaling storage available)</td></tr>
+        <tr><td>pg_hba.conf / SSL config</td><td>Full control</td><td>Limited (RDS parameter groups)</td></tr>
+        <tr><td>Custom OS extensions</td><td>Full control</td><td>Blocked (no OS access)</td></tr>
+        <tr><td>Schema / query design</td><td>You</td><td>You</td></tr>
+        <tr><td>Performance tuning</td><td>You</td><td>You (parameters, indexes)</td></tr>
+      </table>
+
+      <h2>AWS RDS</h2>
+      <div class="code-block">-- RDS: managed relational databases on AWS
+-- Supported engines: PostgreSQL, MySQL, MariaDB, Oracle, SQL Server
+
+-- Key features:
+-- Multi-AZ deployment: synchronous standby in a different Availability Zone
+--   Primary fails → DNS failover to standby (typically 60-120 seconds)
+--   Standby is NOT readable (only for HA, not for reads)
+
+-- Read replicas: up to 5 replicas for read scaling
+--   Asynchronous replication; replica lag usually < 1 second for low-write workloads
+--   Can promote to standalone instance if primary fails (manual process)
+--   Cross-region replicas supported (for disaster recovery)
+
+-- RDS PITR: automated backups retained 0-35 days
+-- Restore to any second within retention window
+-- Restoration creates a NEW DB instance (cannot restore in-place)
+
+-- Storage options:
+-- gp2 (general purpose SSD): balanced performance, burstable
+-- gp3: baseline 3000 IOPS; independently scale IOPS and throughput
+-- io1/io2: provisioned IOPS for highest performance (expensive)
+-- Storage auto scaling: enable to grow automatically when 90% full
+
+-- Parameter groups: configure individual engine parameters
+-- Most static parameters require reboot; dynamic parameters apply immediately
+-- Custom parameter group for production:
+-- shared_buffers = {DBInstanceClassMemory/4}   -- 25% of instance RAM
+-- max_connections = LEAST({DBInstanceClassMemory/9531392}, 5000)
+-- log_min_duration_statement = 1000
+
+-- RDS limitations:
+-- No superuser (cannot run pg_ctl, access filesystem, install arbitrary extensions)
+-- Extensions available: pg_stat_statements, postgis, uuid-ossp, pgcrypto, pg_trgm, etc.
+-- Cannot install custom extensions not in RDS approved list</div>
+
+      <h2>Amazon Aurora</h2>
+      <div class="code-block">-- Aurora: AWS-built cloud-native relational database
+-- Compatible with MySQL 5.7/8.0 and PostgreSQL 14/15
+-- Same API and wire protocol as open-source; most apps can connect without changes
+
+-- Aurora architecture innovation:
+-- Traditional RDS: each replica stores a complete copy of data
+-- Aurora: all instances (writer + readers) share the SAME distributed storage volume
+
+-- Aurora storage:
+-- Storage: 6 copies of data spread across 3 AZs (2 copies per AZ)
+-- Can withstand: 2 full AZ failures without losing write availability
+-- Can withstand: 3 full AZ failures without losing read availability
+-- Storage grows automatically in 10GB increments up to 128TB
+-- I/O is distributed across 100+ storage nodes → very high throughput
+
+-- WAL is the revolution:
+-- Traditional: engine generates WAL, writes data pages, ships full data pages to replica
+-- Aurora: writer sends ONLY WAL (redo log) to shared storage
+-- Replicas apply redo log in place — no data page shipping
+-- This makes replication lag < 20ms even for write-heavy workloads
+
+-- Aurora Global Database:
+-- Primary region: one writer + up to 15 read replicas
+-- Secondary regions: up to 5 secondary regions, each with up to 16 read replicas
+-- Replication lag to secondary regions: typically < 1 second (via storage-level replication)
+-- Disaster recovery: promote secondary region to primary in ~60 seconds
+-- Use case: serve reads from closest region (read from EU for EU users, US for US users)
+
+-- Aurora Serverless v2:
+-- Capacity measured in Aurora Capacity Units (ACUs): 1 ACU = 2GB RAM + proportional CPU
+-- Scales from min_capacity to max_capacity in seconds
+-- Billing: per ACU-second consumed (not per hour like provisioned)
+-- Good for: variable/unpredictable workloads, dev/test, intermittent use
+
+-- Aurora vs RDS comparison:
+-- Aurora: 5x faster than MySQL, 3x faster than PostgreSQL (AWS claim for storage-intensive workloads)
+-- Aurora: higher baseline cost (~20% more than equivalent RDS)
+-- Aurora: much faster replica failover (< 30 seconds vs 60-120s for RDS Multi-AZ)
+-- Aurora: can have 15 read replicas (RDS: 5)</div>
+
+      <h2>Google Cloud SQL and AlloyDB</h2>
+      <div class="code-block">-- Cloud SQL: managed MySQL, PostgreSQL, and SQL Server on GCP
+-- Similar feature set to AWS RDS
+-- Notable: Cloud SQL Proxy for secure connectivity without public IPs
+-- High availability: regional persistent disk, automatic failover to standby
+-- Cross-region replicas supported for disaster recovery
+
+-- AlloyDB (2022): GCP's Aurora-equivalent for PostgreSQL
+-- PostgreSQL-compatible; significantly higher performance than Cloud SQL
+-- Shared log storage architecture (similar to Aurora)
+-- Built-in ML integration: BigQuery ML integration, real-time inference
+-- HTAP: handles OLTP and analytics on same instance (columnar in-memory engine)
+-- Use case: high-performance PostgreSQL with Google Cloud-native features
+
+-- Cloud SQL for PostgreSQL notable limits:
+-- Max 96 vCPUs, 624GB RAM
+-- Storage: up to 64TB
+-- Extensions supported: same set as community PostgreSQL; fewer than RDS Aurora</div>
+
+      <h2>Azure SQL and Azure Cosmos DB</h2>
+      <div class="code-block">-- Azure SQL Database: managed SQL Server
+-- Serverless tier: compute auto-pauses after inactivity; billed only when active
+-- Hyperscale tier: up to 100TB; add read replicas in minutes (named pages service)
+-- Elastic Pools: multiple databases share one resource pool (cost-efficient for multi-tenant)
+
+-- Azure Cosmos DB: globally distributed NoSQL database
+-- Multi-model: document (MongoDB API), key-value, column-family (Cassandra API), graph (Gremlin)
+-- Write to any region simultaneously (multi-master write)
+-- 5 consistency levels (from strongest to weakest):
+--   Strong: reads always see latest committed write (highest latency)
+--   Bounded Staleness: reads lag by at most N versions or T seconds
+--   Session: user sees their own writes, monotonic reads/writes within session
+--   Consistent Prefix: reads never see out-of-order writes
+--   Eventual: lowest latency, reads may return non-latest data
+
+-- Cosmos DB partitioning:
+-- Choose a partition key carefully — all queries without partition key = full scan = expensive
+-- Good partition key: high cardinality, uniform distribution, often in WHERE clause
+-- E.g., for orders: partition key = customer_id (each customer's orders in one partition)
+-- SLA: 99.999% availability for multi-region accounts; 10ms read/write p99 latency guaranteed</div>
+
+      <h2>Self-Hosted vs DBaaS Decision Guide</h2>
+      <table>
+        <tr><th>Factor</th><th>Choose Self-Hosted</th><th>Choose DBaaS</th></tr>
+        <tr><td>Team expertise</td><td>Strong DBA team available</td><td>Small or DevOps-focused team</td></tr>
+        <tr><td>Cost sensitivity</td><td>Very cost-sensitive at scale (DBaaS markup 2-5×)</td><td>Up to ~$50K/year — DBaaS overhead worth the ops savings</td></tr>
+        <tr><td>Compliance</td><td>On-premises required (air-gapped, government)</td><td>Cloud compliances (SOC2, HIPAA, PCI) satisfied by major providers</td></tr>
+        <tr><td>Customization</td><td>Need custom extensions, OS access, custom kernel params</td><td>Standard extensions sufficient</td></tr>
+        <tr><td>Multi-region HA</td><td>Complex to set up properly</td><td>Built-in with Aurora Global or Cosmos DB</td></tr>
+        <tr><td>Vendor lock-in concern</td><td>High portability needed</td><td>Acceptable to depend on AWS/GCP/Azure</td></tr>
+      </table>
+
+      <div class="note-box">
+        <strong>Aurora vs RDS pricing example (2024 ap-south-1):</strong><br>
+        RDS PostgreSQL db.r6g.2xlarge Multi-AZ: ~$720/month<br>
+        Aurora PostgreSQL db.r6g.2xlarge (1 writer + 1 reader): ~$860/month<br>
+        Cost difference: ~$140/month (~$1680/year)<br>
+        Aurora benefit: faster failover, 15 replicas, global database, auto-scaling storage<br>
+        Decision: for most production workloads, Aurora's HA and performance justify the cost.
+      </div>
+
+      <h2>Summary</h2>
+      <ul>
+        <li>DBaaS off-loads OS, backup, HA, and patching management — the right choice for most teams</li>
+        <li>RDS: standard managed relational DB; Multi-AZ for HA; read replicas for reads; PITR up to 35 days</li>
+        <li>Aurora: shared distributed storage; WAL-only replication; 15 read replicas; &lt;30s failover; Global Database for multi-region</li>
+        <li>Aurora Serverless v2: auto-scales ACUs; ideal for variable workloads with no management overhead</li>
+        <li>Cosmos DB: globally distributed NoSQL; 5 configurable consistency levels; multi-master writes; sub-10ms SLA</li>
+        <li>Self-host when: extreme cost sensitivity at large scale, regulatory air-gap, or need for unsupported customization</li>
+      </ul>
+    </article>
+  </main>
+
+  <footer class="page-footer">
+    <p>Part of the DBMS Series — <a href="/articles.html">View all articles</a></p>
+  </footer>
+</body>
+</html>

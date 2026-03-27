@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>BASE Properties and NoSQL Trade-offs: Eventual Consistency Explained | Mudit Gupta</title>
+  <meta name="description" content="BASE vs ACID, eventual consistency models, read-your-writes, monotonic reads, vector clocks, conflict resolution strategies and when to choose NoSQL over relational." />
+  <link rel="stylesheet" href="/assets/css/articles.css" />
+  <style>
+    .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
+    .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; color: #1a1a1a; }
+    .article-content h3 { margin-top: 1.5rem; margin-bottom: 0.75rem; color: #1a1a1a; }
+    .article-content p { margin-bottom: 1rem; color: #333; }
+    .article-content ul, .article-content ol { margin-left: 2rem; margin-bottom: 1rem; }
+    .article-content li { margin-bottom: 0.5rem; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; white-space: pre; margin-bottom: 1rem; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    table th, table td { border: 1px solid #ddd; padding: 0.75rem; text-align: left; }
+    table th { background: #f0f0f0; font-weight: 600; }
+    .note-box { background: #fff8e1; border-left: 4px solid #f9a825; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .tip-box { background: #e8f5e9; border-left: 4px solid #43a047; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .danger-box { background: #ffebee; border-left: 4px solid #e53935; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a href="/" class="home-link">Mudit Gupta</a>
+      <div class="topbar-actions">
+        <a href="/articles.html" class="btn btn-outline">Articles</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <article class="article-content">
+      <p class="kicker">DBMS Series | Part 023</p>
+      <h1>BASE Properties and NoSQL Trade-offs: Eventual Consistency Explained</h1>
+      <p class="meta">NoSQL &amp; Distributed Systems | 24 min read</p>
+
+      <p>
+        ACID guarantees are powerful but costly at scale. As systems grew to billions of users and
+        global deployments, a different consistency model emerged — BASE — which trades strict
+        consistency for availability and partition tolerance. Understanding BASE is prerequisite to
+        making informed architectural choices between relational and NoSQL datastores.
+      </p>
+
+      <h2>ACID Recap: The Relational Guarantee</h2>
+      <table>
+        <tr><th>Property</th><th>Meaning</th></tr>
+        <tr><td>Atomicity</td><td>All operations in a transaction succeed or all fail — no partial writes</td></tr>
+        <tr><td>Consistency</td><td>Database transitions between valid states only; all constraints hold</td></tr>
+        <tr><td>Isolation</td><td>Concurrent transactions see results as if they ran sequentially</td></tr>
+        <tr><td>Durability</td><td>Committed transaction survives crashes (persisted to durable storage)</td></tr>
+      </table>
+
+      <h2>BASE: The NoSQL Alternative</h2>
+      <p>
+        BASE stands for <strong>Basically Available, Soft state, Eventual consistency</strong> —
+        coined by Eric Brewer (of CAP theorem fame) as an acronym to contrast with ACID.
+      </p>
+      <table>
+        <tr><th>Property</th><th>Meaning</th></tr>
+        <tr><td>Basically Available</td><td>The system responds to every request, but the response may reflect stale data</td></tr>
+        <tr><td>Soft state</td><td>The state of the system can change over time even without new inputs (replicas converging)</td></tr>
+        <tr><td>Eventual consistency</td><td>Given no new updates, all replicas will eventually converge to the same value</td></tr>
+      </table>
+
+      <div class="note-box">
+        <strong>Real-world example — Amazon shopping cart:</strong>
+        Amazon famously used an eventually consistent shopping cart: adding an item always succeeds
+        (basically available) even if the cart's nodes are partially unavailable. In rare cases,
+        two sessions might show different carts (soft state). Eventually, when connectivity is
+        restored, the carts converge — typically using "last write wins" or union merge.
+        The trade-off: a slightly stale cart is acceptable; a cart that fails to add items is not.
+      </div>
+
+      <h2>Consistency Models: A Spectrum</h2>
+      <div class="code-block">Strongest                                                        Weakest
+│                                                                       │
+Linearizability → Sequential → Causal → Read-Your-Writes → Eventual
+│                                                                       │
+(most expensive: global coordination)           (cheapest: local operations)</div>
+
+      <h3>Strong Consistency (Linearizability)</h3>
+      <p>
+        After a write completes, every subsequent read (from anywhere in the system) sees that
+        write. Requires coordination across all replicas before acknowledging the write.
+      </p>
+      <div class="code-block">-- Example: bank transfer
+-- Write: transfer $100 from A to B deducted from A and added to B atomically
+-- Any read of A or B afterwards reflects the transfer
+-- Used by: ZooKeeper, Google Spanner, etcd (distributed consensus systems)</div>
+
+      <h3>Causal Consistency</h3>
+      <p>
+        Operations that are causally related are seen in order by all nodes. Concurrent
+        (causally unrelated) operations may be seen in different orders.
+      </p>
+      <div class="code-block">-- Social media example:
+-- User A posts: "Just got promoted!" (post P)
+-- User B replies: "Congratulations!" (reply R, causally after P)
+-- Causal consistency guarantees: any reader who sees R also sees P first
+-- A reader might not see any posts yet — but if they see R, they see P
+-- Used by: MongoDB (causal sessions), some Cassandra configurations</div>
+
+      <h3>Read-Your-Writes Consistency</h3>
+      <p>
+        A process always sees the effects of its own writes. Other processes may not see them yet.
+      </p>
+      <div class="code-block">-- E-commerce profile update example:
+-- User updates their shipping address
+-- Immediately navigates to checkout
+-- Read-your-writes: they see their NEW address at checkout
+-- Without it: they might see the old address (because the read hit a stale replica)
+-- Implementation: route the same session's reads to the replica that has the write,
+--   or use a read-after-write timestamp fencing approach</div>
+
+      <h2>Vector Clocks: Tracking Causality</h2>
+      <div class="code-block">-- Vector clock: a list of counters, one per node
+-- Every event increments the local counter
+-- Messages carry the sender's vector clock; receiver updates accordingly
+
+-- Three nodes: A, B, C
+-- Initial state: A=[0,0,0] B=[0,0,0] C=[0,0,0]
+
+-- A writes X=5: A=[1,0,0]
+-- A sends to B:  B receives A=[1,0,0], updates to B=[1,1,0] (B's counter: 0→1)
+-- B writes X=7: B=[1,2,0]
+-- C independently writes X=9: C=[0,0,1]
+
+-- Now B=[1,2,0] and C=[0,0,1] are CONCURRENT — neither happened before the other
+-- This is a conflict! Both claims to modify X happened independently.
+
+-- Conflict resolution strategies:
+-- 1. Last-Write-Wins (LWW): use wall-clock timestamp — simple but can lose writes
+-- 2. Multi-value register (Riak CRDT): keep both values, return to application to resolve
+-- 3. Application-specific merge: e.g., shopping cart union of items</div>
+
+      <h2>Conflict Resolution in Practice</h2>
+      <table>
+        <tr><th>Strategy</th><th>How It Works</th><th>Data Loss Risk</th></tr>
+        <tr><td>Last Write Wins (LWW)</td><td>Highest timestamp wins; conflicting write discarded</td><td>Yes — concurrent writes can be silently overwritten</td></tr>
+        <tr><td>Multi-Value (Sibling)</td><td>Both values kept; application picks or merges</td><td>No automatic loss; applications must handle siblings</td></tr>
+        <tr><td>CRDT (Conflict-free Replicated Data Type)</td><td>Data structure designed to merge automatically (counters, sets, registers)</td><td>No — always converges correctly by definition</td></tr>
+        <tr><td>Read-Repair</td><td>On read, coordinator detects inconsistency and repairs</td><td>Works after-the-fact; reads may briefly see stale data</td></tr>
+      </table>
+
+      <h2>CRDT Examples</h2>
+      <div class="code-block">-- G-Counter (Grow-only Counter):
+-- Each node has its own counter slot; increment is local
+-- Merge: take max of each slot; sum all slots for total value
+-- No conflict possible: you can only add
+
+-- G-Set (Grow-only Set):
+-- Elements can only be added, never removed
+-- Merge: union of both sets
+-- Example: "seen messages" set in a messaging app
+
+-- OR-Set (Observed-Remove Set):
+-- Adds a unique tag per-element-per-add operation
+-- Remove marks that specific tag
+-- Concurrent add + remove: add wins (the new tag survives)
+-- Used in: shopping carts (Riak), collaborative editing
+
+-- PN-Counter (Positive-Negative Counter):
+-- Two G-Counters: one for increments, one for decrements
+-- Value = sum(increments) - sum(decrements)
+-- Example: like/dislike counters on posts</div>
+
+      <h2>Tunable Consistency: The Quorum Model</h2>
+      <div class="code-block">-- Cassandra / DynamoDB style tunable consistency
+-- N = replication factor (copies of each row)
+-- W = write quorum (how many replicas must confirm the write)
+-- R = read quorum (how many replicas must respond to the read)
+
+-- Strong consistency requires: R + W > N
+-- Example: N=3, W=2, R=2 → 2+2=4 > 3 → strong consistency
+-- ANY read will overlap with at least one write: guaranteed to see latest
+
+-- Eventual consistency: R + W ≤ N
+-- Example: N=3, W=1, R=1 → 1+1=2 ≤ 3 → eventual consistency only
+-- A write goes to one replica; a read may hit a different replica: stale data possible
+-- Maximum availability: operations succeed even if multiple nodes are down
+
+-- Common production settings:
+-- QUORUM (W=N/2+1, R=N/2+1): strong consistency, tolerates up to N/2 failures  
+-- LOCAL_QUORUM: quorum within the local datacenter only
+-- ONE: fastest, least consistent — good for analytics or time-series data
+-- ALL: needs all N replicas — highest consistency, lowest availability
+
+-- In Cassandra:
+INSERT INTO orders (id, status) VALUES (123, 'pending')
+USING CONSISTENCY QUORUM;
+
+SELECT * FROM orders WHERE id = 123 
+USING CONSISTENCY LOCAL_QUORUM;</div>
+
+      <h2>Choosing SQL vs NoSQL</h2>
+      <table>
+        <tr><th>Dimension</th><th>Choose RDBMS (ACID)</th><th>Choose NoSQL (BASE)</th></tr>
+        <tr><td>Data relationships</td><td>Complex joins, many foreign keys</td><td>Denormalized documents, single-entity access</td></tr>
+        <tr><td>Consistency needs</td><td>Financial, inventory, booking (must be exact)</td><td>Social feeds, activity logs, IoT metrics</td></tr>
+        <tr><td>Query patterns</td><td>Ad-hoc queries, reporting, diverse filters</td><td>Known access patterns, low-latency single entity</td></tr>
+        <tr><td>Schema flexibility</td><td>Stable, well-defined schema</td><td>Evolving schema, heterogeneous fields per document</td></tr>
+        <tr><td>Scale dimension</td><td>Vertical scaling, some horizontal read-replicas</td><td>Horizontal write scaling</td></tr>
+        <tr><td>Team expertise</td><td>SQL is universal; easy tooling</td><td>Requires understanding of consistency trade-offs</td></tr>
+      </table>
+
+      <div class="danger-box">
+        <strong>Common mistake:</strong> Choosing NoSQL because "it scales" without understanding
+        the consistency guarantees you're giving up. A payment system needs ACID; using
+        eventual consistency can lead to double-charges, lost orders, or phantom inventory.
+        For most applications, a well-tuned PostgreSQL handles millions of requests per second —
+        evaluate your actual bottleneck before trading consistency for scalability.
+      </div>
+
+      <h2>Summary</h2>
+      <ul>
+        <li>BASE = Basically Available, Soft state, Eventual consistency — trades strict consistency for availability</li>
+        <li>Eventual consistency: given no new updates, all replicas converge — but reads may be stale in the interim</li>
+        <li>Consistency models form a spectrum: linearizability → causal → session → eventual</li>
+        <li>Vector clocks track causality; concurrent writes become conflicts requiring resolution strategies</li>
+        <li>CRDTs design data structures that merge automatically without conflicts (counters, sets)</li>
+        <li>Quorum (R+W&gt;N) gives strong consistency; lower quorums give higher availability with eventual consistency</li>
+        <li>NoSQL shines for single-entity access patterns, flexible schemas, and write-heavy horizontal scale</li>
+      </ul>
+    </article>
+  </main>
+
+  <footer class="page-footer">
+    <p>Part of the DBMS Series — <a href="/articles.html">View all articles</a></p>
+  </footer>
+</body>
+</html>

@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>Concurrency Control: 2PL, MVCC and Optimistic Concurrency | Mudit Gupta</title>
+  <meta name="description" content="Concurrency control methods compared: Two-Phase Locking (2PL and Strict 2PL), MVCC snapshot isolation, optimistic concurrency control, and timestamp-based ordering." />
+  <link rel="stylesheet" href="/assets/css/articles.css" />
+  <style>
+    .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
+    .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; color: #1a1a1a; }
+    .article-content h3 { margin-top: 1.5rem; margin-bottom: 0.75rem; color: #1a1a1a; }
+    .article-content p { margin-bottom: 1rem; color: #333; }
+    .article-content ul, .article-content ol { margin-left: 2rem; margin-bottom: 1rem; }
+    .article-content li { margin-bottom: 0.5rem; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; white-space: pre; margin-bottom: 1rem; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    table th, table td { border: 1px solid #ddd; padding: 0.75rem; text-align: left; }
+    table th { background: #f0f0f0; font-weight: 600; }
+    .note-box { background: #fff8e1; border-left: 4px solid #f9a825; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .tip-box { background: #e8f5e9; border-left: 4px solid #43a047; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .danger-box { background: #ffebee; border-left: 4px solid #e53935; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a href="/" class="home-link">Mudit Gupta</a>
+      <div class="topbar-actions">
+        <a href="/articles.html" class="btn btn-outline">Articles</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <article class="article-content">
+      <p class="kicker">DBMS Series | Part 031</p>
+      <h1>Concurrency Control: 2PL, MVCC and Optimistic Concurrency</h1>
+      <p class="meta">Transactions | 27 min read</p>
+
+      <p>
+        Concurrency control is the mechanism that ensures concurrent transactions produce results
+        equivalent to some serial execution — the core of the Isolation property. There are three
+        main families: locking-based (2PL), version-based (MVCC), and validation-based (optimistic).
+        Modern databases combine multiple approaches.
+      </p>
+
+      <h2>Two-Phase Locking (2PL)</h2>
+      <p>
+        2PL is the classical locking protocol that guarantees conflict serializability.
+        It has two phases: a growing phase (acquire locks only) and a shrinking phase
+        (release locks only, never acquire new ones).
+      </p>
+      <div class="code-block">-- 2PL Protocol:
+-- Phase 1 (Growing): transaction can acquire and upgrade locks; cannot release
+-- Phase 2 (Shrinking): transaction can release locks; cannot acquire new ones
+
+-- Lock point: the moment between growing and shrinking phases
+-- After the lock point, no new data can be accessed
+
+-- Example of a 2PL schedule:
+-- T1: Request Shared(A) → Shared(B) → [lock point] → Release(A) → Release(B)
+-- T2: Request Shared(B) → Exclusive(A) ... (waits for T1 to release A)
+
+-- Conflict types:
+-- Shared (S) lock: allows reading; compatible with other S locks
+-- Exclusive (X) lock: required for writes; incompatible with any other lock
+-- Compatibility matrix:
+--         S     X
+-- S:    OK    Wait
+-- X:    Wait  Wait
+
+-- Problem with basic 2PL: CASCADING ROLLBACK
+-- T1 writes X, releases lock early (in shrinking phase)
+-- T2 reads X (dirty read)
+-- T1 rolls back → T2's read was dirty → T2 must also roll back → T3 that read T2's work too...
+-- This cascade is expensive</div>
+
+      <h3>Strict 2PL</h3>
+      <div class="code-block">-- Strict 2PL: release ALL EXCLUSIVE locks only at transaction commit/abort
+-- This prevents cascading rollbacks because uncommitted data is never released for reading
+-- Most production databases implement Strict 2PL (or a close variant)
+
+-- Strict 2PL schedule:
+-- T1: Acquire S(A), Acquire X(B) ... do work ... COMMIT → Release S(A), Release X(B)
+-- Locks held until the very end — no dirty reads possible
+
+-- Rigorous 2PL (Strong Strict): release ALL locks (S and X) only at commit
+-- Strongest variant; used by PostgreSQL for REPEATABLE READ
+-- Guarantee: conflict serializable AND no dirty reads AND no non-repeatable reads</div>
+
+      <h2>MVCC: Multi-Version Concurrency Control</h2>
+      <p>
+        MVCC maintains multiple versions of each row simultaneously. Readers see a consistent
+        snapshot from the start of their transaction; writers create new versions. The key insight:
+        <strong>readers don't block writers; writers don't block readers.</strong>
+      </p>
+      <div class="code-block">-- PostgreSQL MVCC mechanics:
+-- Each row has: xmin (creating transaction), xmax (deleting/updating transaction), ctid (physical location)
+
+-- Initial state (transaction 100 created this row):
+-- {id:1001, balance:5000, xmin:100, xmax:null}
+
+-- T1 (xid=201) starts a transaction (snapshot: "see rows where xmin committed before 201")
+-- T2 (xid=202) updates balance = 4500:
+--   Creates new row:    {id:1001, balance:4500, xmin:202, xmax:null}
+--   Marks old row:      {id:1001, balance:5000, xmin:100, xmax:202}
+-- T2 COMMITs
+
+-- T1 reads balance:
+-- T1's snapshot was taken at start → it sees committed rows with xmin < 201
+-- xmin:202 > 201 → the new row is INVISIBLE to T1
+-- T1 sees the old row {balance:5000} — its snapshot is consistent from its start time!
+
+-- T3 (xid=203) starts AFTER T2 commits:
+-- T3's snapshot sees xmin:202 (committed before 203) → sees the new row {balance:4500}
+
+-- This is SNAPSHOT ISOLATION:
+-- Each transaction sees the database as it was at transaction start
+-- No locking needed for reads
+-- Writers create new versions; old versions are visible to older snapshots</div>
+
+      <h3>MVCC and Write-Write Conflicts</h3>
+      <div class="code-block">-- MVCC prevents read-write conflicts without locks
+-- But write-write conflicts still need locking!
+
+-- Problem: two transactions update the same row simultaneously
+-- T1: UPDATE accounts SET balance = 4500 WHERE id = 1001
+-- T2: UPDATE accounts SET balance = 3000 WHERE id = 1001
+
+-- PostgreSQL handles this:
+-- T1 acquires row-level lock on the row it's updating
+-- T2 tries to update same row → finds row locked by T1 → WAITS
+-- T1 commits → releases lock
+-- T2 wakes up, re-evaluates the condition on the LATEST version of the row
+-- (If the row still satisfies T2's WHERE clause, T2 proceeds with its update)
+
+-- "First committer wins" for REPEATABLE READ:
+-- T1 and T2 both read balance=5000 at their snapshot start
+-- T1 updates balance=4500, commits
+-- T2 tries to update balance=3000
+-- T2's snapshot says it should update from 5000, but the row changed
+-- At SERIALIZABLE: T2 gets ERROR "could not serialize access" → must retry
+-- At REPEATABLE READ: T2's update proceeds (possible write skew)</div>
+
+      <h3>MVCC Garbage Collection</h3>
+      <div class="code-block">-- Old row versions accumulate (MVCC creates dead tuples on every update/delete)
+-- VACUUM reclaims space by removing dead tuples no longer visible to any active transaction
+
+-- Check for bloat:
+SELECT relname, n_live_tup, n_dead_tup, 
+       round(n_dead_tup::numeric / NULLIF(n_live_tup, 0) * 100, 1) AS dead_ratio
+FROM pg_stat_user_tables
+ORDER BY n_dead_tup DESC;
+
+-- If dead_ratio > 20%, tables benefit from manual VACUUM:
+VACUUM ANALYZE orders;
+VACUUM FULL orders;  -- rewrites entire table (requires exclusive lock; use carefully)
+
+-- Autovacuum is your friend: configure it to run frequently for high-churn tables
+ALTER TABLE orders SET (autovacuum_vacuum_scale_factor = 0.01); -- vacuum after 1% dead</div>
+
+      <h2>Serializable Snapshot Isolation (SSI)</h2>
+      <p>
+        PostgreSQL's SERIALIZABLE level uses SSI — a snapshot-based approach that detects
+        and aborts transactions that would produce non-serializable outcomes, without
+        blocking readers at all.
+      </p>
+      <div class="code-block">-- How SSI detects write skew anomalies:
+-- Classic write skew: "on-call doctor" problem
+-- DB rule: at least one doctor must be on call
+-- T1: reads → 2 doctors on call → removes itself (writes)
+-- T2: reads → 2 doctors on call → removes itself (writes)
+-- Both succeed → 0 doctors on call → rule violated!
+
+-- SSI tracks "rw-anti-dependencies":
+-- T1 read a row that T2 later wrote → T1 depends on T2
+-- T2 read a row that T1 later wrote → T2 depends on T1
+-- Cycle detected (T1 → T2 → T1) → abort one transaction with serialization error
+
+-- PostgreSQL SSI behavior:
+BEGIN ISOLATION LEVEL SERIALIZABLE;
+SELECT COUNT(*) FROM doctors WHERE on_call = TRUE;  -- T1 reads
+-- SSI tracks this read
+UPDATE doctors SET on_call = FALSE WHERE id = 1;     -- T1 writes
+COMMIT;  -- May get: ERROR: could not serialize access due to read/write dependencies
+
+-- The aborted transaction must be retried by the application
+-- This is correct behavior: SSI chose to abort rather than allow an anomaly</div>
+
+      <h2>Optimistic Concurrency Control (OCC)</h2>
+      <p>
+        Optimistic CC assumes conflicts are rare. Transactions proceed without locking,
+        but validate before commit. If conflict detected, abort and retry.
+      </p>
+      <div class="code-block">-- OCC has three phases:
+-- 1. Read (execute): read data, accumulate read set and write set in memory
+-- 2. Validate: check if any other transaction committed conflicting writes
+-- 3. Write (commit) or Abort
+
+-- Application-level optimistic locking (version number pattern):
+-- Very common in ORM frameworks
+
+CREATE TABLE products (
+    id           BIGINT PRIMARY KEY,
+    name         TEXT,
+    price        NUMERIC,
+    version      INT DEFAULT 0   -- optimistic lock version
+);
+
+-- Read:
+SELECT id, price, version FROM products WHERE id = 101;
+-- Returns: id=101, price=99.99, version=5
+
+-- Update with version check (optimistic):
+UPDATE products
+SET price = 109.99, version = version + 1
+WHERE id = 101 AND version = 5;  -- only update if version hasn't changed
+-- Returns: 0 rows updated → CONFLICT! Someone else updated between our read and write
+-- Application retries: re-read, re-compute, re-update
+
+-- vs Pessimistic locking (SELECT FOR UPDATE):
+SELECT id, price FROM products WHERE id = 101 FOR UPDATE;
+-- Holds an exclusive lock until your transaction commits
+-- No retry logic needed, but reader blocks other writers throughout the transaction</div>
+
+      <h2>Comparison Summary</h2>
+      <table>
+        <tr><th>Aspect</th><th>2PL (Pessimistic)</th><th>MVCC (Snapshot)</th><th>Optimistic (OCC)</th></tr>
+        <tr><td>Reader behavior</td><td>Blocks writers (takes S lock)</td><td>Sees snapshot; no locking</td><td>No locking; validates at commit</td></tr>
+        <tr><td>Writer behavior</td><td>Blocks readers and writers</td><td>Blocks concurrent writers on same row</td><td>Writes uncommitted; validate-or-abort</td></tr>
+        <tr><td>Best for</td><td>Predictable, low-contention workloads</td><td>Mixed read/write, OLTP</td><td>Low-conflict read-heavy workloads</td></tr>
+        <tr><td>Deadlock possible?</td><td>Yes — need detection/prevention</td><td>Possible on write-write conflicts</td><td>No deadlocks; possible many aborts on hot rows</td></tr>
+        <tr><td>Used by</td><td>Many traditional DBs (with Strict 2PL)</td><td>PostgreSQL, Oracle, MySQL InnoDB</td><td>CockroachDB serializable, app-level patterns</td></tr>
+      </table>
+
+      <div class="tip-box">
+        <strong>When to choose pessimistic vs optimistic:</strong> High-contention scenarios
+        (many transactions competing for the same rows) favor pessimistic locking — retries
+        are expensive. Low-contention scenarios (conflicts are rare) favor optimistic — no
+        blocking overhead. Most OLTP databases use MVCC + row-level pessimistic locking
+        on write-write conflicts — a pragmatic hybrid.
+      </div>
+
+      <h2>Summary</h2>
+      <ul>
+        <li>2PL: acquire locks in growing phase, release in shrinking phase; Strict 2PL holds X-locks until commit</li>
+        <li>Strict 2PL prevents cascading rollbacks; used by most production databases</li>
+        <li>MVCC: each transaction sees a timestamped snapshot; readers never block writers</li>
+        <li>MVCC creates dead tuples on every update — VACUUM is essential for reclaiming space</li>
+        <li>SSI (PostgreSQL SERIALIZABLE) detects anomalies via rw-anti-dependency cycles; aborts conflicting transactions</li>
+        <li>Optimistic CC: no locks during execution; validate-or-abort at commit; best for low-conflict workloads</li>
+      </ul>
+    </article>
+  </main>
+
+  <footer class="page-footer">
+    <p>Part of the DBMS Series — <a href="/articles.html">View all articles</a></p>
+  </footer>
+</body>
+</html>

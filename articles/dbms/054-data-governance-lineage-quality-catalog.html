@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta http-equiv="X-UA-Compatible" content="IE=edge" />
+<title>Data Governance: Lineage, Quality, Catalog and Compliance | Mudit Gupta</title>
+<meta name="description" content="Data governance fundamentals: ownership, data quality checks, metadata catalogs, lineage tracing, and compliance controls for production data platforms." />
+<link rel="stylesheet" href="/assets/css/articles.css" /><style>.article-content{max-width:800px;margin:0 auto;line-height:1.8}.code-block{background:#f5f5f5;padding:1rem;border-radius:4px;white-space:pre;overflow-x:auto;font-family:monospace}</style>
+</head><body>
+<header class="topbar"><div class="topbar-inner"><a href="/" class="home-link">Mudit Gupta</a><div class="topbar-actions"><a href="/articles.html" class="btn btn-outline">Articles</a></div></div></header>
+<main><article class="article-content">
+<p class="kicker">DBMS Series | Part 054</p><h1>Data Governance: Lineage, Quality, Catalog and Compliance</h1><p class="meta">Data Platform | 16 min read</p>
+<p>As organizations scale, data issues are less about SQL syntax and more about trust: who owns data, where it came from, whether it is correct, and who is allowed to use it.</p>
+<h2>Governance Building Blocks</h2>
+<ul>
+<li>Ownership: assign data owners and stewards per domain.</li>
+<li>Catalog: searchable metadata (schema, owner, freshness, sensitivity).</li>
+<li>Lineage: trace every dashboard field back to source tables and transforms.</li>
+<li>Quality: automated checks on null rates, uniqueness, ranges, and referential integrity.</li>
+<li>Policy: classify PII and enforce retention + access controls.</li>
+</ul>
+<h2>Quality Checks Example</h2>
+<div class="code-block">-- dbt-like data tests
+SELECT COUNT(*) FROM customers WHERE email IS NULL;              -- expect 0
+SELECT email, COUNT(*) FROM customers GROUP BY email HAVING COUNT(*) > 1; -- expect 0
+SELECT COUNT(*) FROM orders WHERE total < 0;                     -- expect 0</div>
+<h2>Summary</h2><ul>
+<li>Without governance, analytics becomes untrusted and inconsistent.</li>
+<li>Lineage + quality tests turn data pipelines from opaque to auditable.</li>
+<li>Treat data contracts as seriously as API contracts.</li>
+</ul>
+</article></main>
+<footer class="page-footer"><p>Part of the DBMS Series — <a href="/articles.html">View all articles</a></p></footer>
+</body></html>

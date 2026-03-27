@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta http-equiv="X-UA-Compatible" content="IE=edge" />
+<title>NewSQL and Distributed SQL: Spanner, CockroachDB and YugabyteDB | Mudit Gupta</title>
+<meta name="description" content="How NewSQL systems provide SQL + ACID with horizontal scale, consensus replication, global transactions, and trade-offs versus classic RDBMS." />
+<link rel="stylesheet" href="/assets/css/articles.css" /><style>.article-content{max-width:800px;margin:0 auto;line-height:1.8}.code-block{background:#f5f5f5;padding:1rem;border-radius:4px;white-space:pre;overflow-x:auto;font-family:monospace}</style>
+</head><body>
+<header class="topbar"><div class="topbar-inner"><a href="/" class="home-link">Mudit Gupta</a><div class="topbar-actions"><a href="/articles.html" class="btn btn-outline">Articles</a></div></div></header>
+<main><article class="article-content">
+<p class="kicker">DBMS Series | Part 052</p><h1>NewSQL and Distributed SQL: Spanner, CockroachDB and YugabyteDB</h1><p class="meta">Distributed Systems | 18 min read</p>
+<p>NewSQL aims to keep relational SQL and ACID while scaling horizontally like NoSQL. It relies on consensus replication and distributed transaction protocols under the hood.</p>
+<h2>Core Architecture Concepts</h2>
+<div class="code-block">-- Data split into ranges/tablets/shards
+-- Each range replicated across nodes (typically 3 replicas)
+-- One replica elected leader using Raft/Paxos
+-- Writes go to leader -> replicated quorum -> commit
+-- Reads can be leader or follower reads depending on consistency needs</div>
+<h2>System Highlights</h2>
+<div class="code-block">-- Google Spanner:
+-- Globally distributed SQL with external consistency
+-- Uses TrueTime API for globally ordered commits
+
+-- CockroachDB:
+-- Postgres wire compatibility, Raft replication, SERIALIZABLE isolation by default
+
+-- YugabyteDB:
+-- Postgres-compatible YSQL layer over distributed DocDB storage
+-- Strong for geo-distributed transactional workloads</div>
+<h2>When to Use</h2><ul>
+<li>Need multi-region writes with strong consistency.</li>
+<li>Need high availability with automatic failover and no single primary bottleneck.</li>
+<li>Can accept added operational and latency complexity compared to single-region PostgreSQL.</li>
+</ul>
+<h2>Summary</h2><ul><li>Distributed SQL solves global scale + SQL consistency but is not a free upgrade.</li><li>Latency of consensus and cross-region links must be considered at design time.</li></ul>
+</article></main>
+<footer class="page-footer"><p>Part of the DBMS Series — <a href="/articles.html">View all articles</a></p></footer>
+</body></html>

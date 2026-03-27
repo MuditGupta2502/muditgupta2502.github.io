@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta http-equiv="X-UA-Compatible" content="IE=edge" />
+<title>DBMS System Design Checklist for Production | Mudit Gupta</title>
+<meta name="description" content="A practical production-ready DBMS checklist covering schema, indexing, backup, recovery, observability, security, scaling, and migration readiness." />
+<link rel="stylesheet" href="/assets/css/articles.css" /><style>.article-content{max-width:800px;margin:0 auto;line-height:1.8}.code-block{background:#f5f5f5;padding:1rem;border-radius:4px;white-space:pre;overflow-x:auto;font-family:monospace}.tip-box{background:#e8f5e9;border-left:4px solid #43a047;padding:.75rem 1rem;margin:1rem 0}</style>
+</head><body>
+<header class="topbar"><div class="topbar-inner"><a href="/" class="home-link">Mudit Gupta</a><div class="topbar-actions"><a href="/articles.html" class="btn btn-outline">Articles</a></div></div></header>
+<main><article class="article-content">
+<p class="kicker">DBMS Series | Part 056</p><h1>DBMS System Design Checklist for Production</h1><p class="meta">Capstone | 19 min read</p>
+<p>This final article is a production-readiness checklist you can apply before launch and at every major scale milestone.</p>
+<h2>Schema and Query Readiness</h2>
+<ul>
+<li>Primary and foreign keys defined for all core entities.</li>
+<li>High-cardinality query paths indexed; composite indexes match filter + sort order.</li>
+<li>Hot tables have clear partitioning/archival strategy.</li>
+<li>Top 20 slow queries identified from pg_stat_statements and optimized.</li>
+</ul>
+<h2>Reliability and Recovery</h2>
+<ul>
+<li>Automated backups + PITR configured and tested.</li>
+<li>RTO and RPO documented and validated by drills.</li>
+<li>Replica failover runbook tested quarterly.</li>
+<li>Migration strategy uses expand/contract and rollback plans.</li>
+</ul>
+<h2>Security</h2>
+<ul>
+<li>TLS enforced in transit; encryption at rest enabled.</li>
+<li>Least-privilege roles, no app superuser.</li>
+<li>RLS for multi-tenant data isolation.</li>
+<li>Audit logs for privileged operations.</li>
+</ul>
+<h2>Observability</h2>
+<div class="code-block">-- Minimum dashboards
+-- 1) CPU, memory, disk IOPS, network throughput
+-- 2) Active connections, lock waits, long-running transactions
+-- 3) Slow query p95/p99 latency
+-- 4) Replication lag and WAL generation
+-- 5) Autovacuum health and dead tuple ratio</div>
+<div class="tip-box"><strong>Practical principle:</strong> if a failure mode does not have a tested playbook, treat it as unresolved design risk.</div>
+<h2>Summary</h2><ul>
+<li>Production readiness is not just schema correctness; it is recoverability, observability, and controlled change.</li>
+<li>Strong DB systems are designed for failure and growth from day one.</li>
+<li>Use this checklist as a living document, not a one-time launch artifact.</li>
+</ul>
+</article></main>
+<footer class="page-footer"><p>Part of the DBMS Series — <a href="/articles.html">View all articles</a></p></footer>
+</body></html>

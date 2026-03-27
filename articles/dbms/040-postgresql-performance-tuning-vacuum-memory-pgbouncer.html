@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>PostgreSQL Performance Tuning: Schema, Vacuum, Memory and Connection Pooling | Mudit Gupta</title>
+  <meta name="description" content="End-to-end PostgreSQL performance tuning: schema design choices, VACUUM and autovacuum, shared_buffers and memory settings, work_mem, and PgBouncer connection pooling." />
+  <link rel="stylesheet" href="/assets/css/articles.css" />
+  <style>
+    .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
+    .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; color: #1a1a1a; }
+    .article-content h3 { margin-top: 1.5rem; margin-bottom: 0.75rem; color: #1a1a1a; }
+    .article-content p { margin-bottom: 1rem; color: #333; }
+    .article-content ul, .article-content ol { margin-left: 2rem; margin-bottom: 1rem; }
+    .article-content li { margin-bottom: 0.5rem; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; white-space: pre; margin-bottom: 1rem; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    table th, table td { border: 1px solid #ddd; padding: 0.75rem; text-align: left; }
+    table th { background: #f0f0f0; font-weight: 600; }
+    .note-box { background: #fff8e1; border-left: 4px solid #f9a825; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .tip-box { background: #e8f5e9; border-left: 4px solid #43a047; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .danger-box { background: #ffebee; border-left: 4px solid #e53935; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a href="/" class="home-link">Mudit Gupta</a>
+      <div class="topbar-actions">
+        <a href="/articles.html" class="btn btn-outline">Articles</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <article class="article-content">
+      <p class="kicker">DBMS Series | Part 040</p>
+      <h1>PostgreSQL Performance Tuning: Schema, Vacuum, Memory and Connection Pooling</h1>
+      <p class="meta">Performance | 26 min read</p>
+
+      <p>
+        Database performance problems fall into three layers: bad schema design that causes
+        unnecessary work, inadequate memory configuration that forces excessive I/O, and
+        connection overhead that steals resources from actual query execution. Fixing each
+        layer in isolation produces diminishing returns — systematic tuning across all three
+        is where dramatic improvements come from.
+      </p>
+
+      <h2>Schema-Level Tuning</h2>
+      <h3>Choosing the Right Data Types</h3>
+      <div class="code-block">-- Use the smallest type that fits — smaller rows = more rows per page = better cache hit rate
+
+-- Integer types:
+-- SMALLINT (2 bytes): 0-65535 or -32768 to 32767
+-- INTEGER (4 bytes): up to ~2 billion
+-- BIGINT (8 bytes): ~9 quintillion  ← use only when id or count might exceed 2B
+-- Don't use BIGINT for every column "just in case" — doubles storage of integer columns
+
+-- Avoid VARCHAR(n) where n is arbitrary:
+-- In PostgreSQL, VARCHAR(255) does NOT improve performance; check is same as TEXT
+-- Use TEXT for variable strings; add a CHECK constraint if length matters:
+-- ALTER TABLE users ADD CONSTRAINT chk_name_len CHECK (LENGTH(name) <= 100);
+
+-- Use NUMERIC only when exact precision is needed (money, taxes):
+-- NUMERIC(12,2) uses variable-length storage; arithmetic is slow
+-- For financial values: use INTEGER to store cents instead of DECIMAL:
+-- price_cents INTEGER NOT NULL -- store 1999 for $19.99
+-- Avoids floating-point errors AND is faster than NUMERIC
+
+-- UUID vs BIGSERIAL for primary keys:
+-- BIGSERIAL: compact (8 bytes), sequential, perfect for B+ tree performance
+-- UUID (v4): 16 bytes, random → causes B+ tree page splits, 30-50% write slowdown
+-- UUID (v7): time-ordered UUID → sequential clustering, near-BIGSERIAL insert performance
+-- If global uniqueness is needed: use UUID v7 (PostgreSQL 17+) or generate ordered UUIDs
+
+-- TIMESTAMPTZ vs TIMESTAMP:
+-- TIMESTAMPTZ stores as UTC internally; cheaper to convert on read
+-- TIMESTAMP stores without timezone; relies on application to manage TZ correctly
+-- Always prefer TIMESTAMPTZ for any time-related column</div>
+
+      <h3>Table Design for Insert Performance</h3>
+      <div class="code-block">-- FILLFACTOR: controls how full each page is filled on INSERT
+-- Default is 100% (page completely filled)
+-- When a row is UPDATEd, PostgreSQL writes a new version:
+-- If page is 100% full → new version goes to a different page (no HOT update)
+-- If page is < 100% full → new version fits on same page (HOT update) → much faster
+
+-- For tables with frequent UPDATEs:
+CREATE TABLE orders (
+    id BIGSERIAL PRIMARY KEY,
+    status TEXT,
+    -- ...
+) WITH (fillfactor = 80);  -- Leave 20% free for in-place updates
+
+-- HOT (Heap Only Tuple) updates:
+-- When old and new version are on same page → index NOT updated
+-- Critical for tables that update same columns frequently (status, etc.)
+-- Check HOT update effectiveness:
+SELECT relname,
+       n_tup_upd AS updates,
+       n_tup_hot_upd AS hot_updates,
+       ROUND(100 * n_tup_hot_upd::numeric / NULLIF(n_tup_upd, 0), 1) AS hot_pct
+FROM pg_stat_user_tables
+WHERE n_tup_upd > 0
+ORDER BY hot_pct;
+-- hot_pct < 50% → pages too full; reduce fillfactor
+
+-- Avoid unnecessary NULLs:
+-- NULL values consume 1 bit in a null bitmap per row
+-- But: NOT NULL columns allow more row-level optimization by the planner</div>
+
+      <h2>VACUUM and Autovacuum</h2>
+      <div class="code-block">-- PostgreSQL uses MVCC: old row versions are NOT deleted on UPDATE/DELETE
+-- They become "dead tuples" — wasting space, slowing full scans, aging XID counter
+-- VACUUM reclaims dead tuple space and updates the visibility map
+
+-- Check when autovacuum last ran and dead tuple count:
+SELECT relname, last_autovacuum, n_dead_tup, n_live_tup,
+       pg_size_pretty(pg_total_relation_size(oid)) AS total_size
+FROM pg_stat_user_tables
+JOIN pg_class ON relname = pg_class.relname
+WHERE n_dead_tup > 1000
+ORDER BY n_dead_tup DESC;
+
+-- Manual VACUUM (non-locking, online):
+VACUUM orders;                     -- reclaim dead tuples only
+VACUUM ANALYZE orders;             -- reclaim + update query planner statistics
+VACUUM FULL orders;                -- rewrite table to disk (locks table, removes bloat completely)
+
+-- Autovacuum triggers (defaults):
+-- vacuum fires when: n_dead_tup > autovacuum_vacuum_threshold + autovacuum_vacuum_scale_factor * n_live_tup
+-- threshold = 50, scale_factor = 0.2 → vacuum fires when dead tuples > 50 + 20% of table
+-- For a 10M row table: fires at 2,000,050 dead tuples (far too late for fast OLTP)
+
+-- Tune per-table autovacuum for high-churn tables:
+ALTER TABLE orders SET (
+    autovacuum_vacuum_scale_factor = 0.01,   -- vacuum when 1% rows are dead (not 20%)
+    autovacuum_vacuum_threshold = 100,        -- but at least 100 dead rows first
+    autovacuum_analyze_scale_factor = 0.005, -- analyze when 0.5% rows changed
+    autovacuum_vacuum_cost_delay = 2         -- lower delay = more aggressive vacuum
+);
+
+-- Freeze: prevents XID wraparound (32-bit counter wraps at ~2 billion)
+-- autovacuum_freeze_max_age = 200000000 (200M transactions)
+-- After this many transactions, PostgreSQL FORCES a freeze vacuum
+-- Monitor: max(age(relfrozenxid)) from pg_class — alert if > 150M
+
+-- Transaction ID age alert query:
+SELECT max(age(relfrozenxid)) AS max_xid_age
+FROM pg_class
+WHERE relkind IN ('r', 't');
+-- Alert if > 1.5 billion; DANGER if > 1.9 billion (wraparound imminent)</div>
+
+      <h2>Memory Configuration</h2>
+      <div class="code-block">-- PostgreSQL memory parameters (postgresql.conf):
+
+-- shared_buffers (default: 128MB; recommendation: 25% of total RAM)
+-- The main in-memory page cache for data pages
+-- 4GB RAM → 1GB; 16GB RAM → 4GB; 64GB RAM → 16GB (cap around 8-16GB for diminishing returns)
+shared_buffers = 4GB
+
+-- effective_cache_size (default: 4GB; recommendation: 75% of total RAM)
+-- NOT actual allocated memory — tells the planner how much OS + PG cache is available
+-- Planner uses this to decide if index scans are cheaper than seq scans
+-- Higher value → planner prefers indexes more aggressively
+effective_cache_size = 12GB
+
+-- work_mem: per-operation memory for sorts, hash joins, hash aggregates
+-- Default: 4MB. Each operation (sort, hash join) gets this much.
+-- 100 concurrent connections × 5 operations each × 4MB = 2GB peak usage
+-- Formula: safe work_mem = (RAM - shared_buffers) / (max_connections × avg_ops_per_query)
+-- For most OLTP: 16-32MB. For analytics: 256MB-1GB for specific sessions.
+work_mem = 32MB
+-- Override per session for large queries:
+-- SET work_mem = '256MB';  -- before running a big sort/aggregation
+
+-- maintenance_work_mem: for VACUUM, CREATE INDEX, CLUSTER, ALTER TABLE ADD FOREIGN KEY
+-- Default: 64MB. Set to 256MB-1GB for faster maintenance operations.
+maintenance_work_mem = 512MB
+
+-- max_parallel_workers_per_gather (default: 2)
+-- Controls parallelism for a single query
+-- Set to number of CPUs / 2 for OLTP, number of CPUs for analytics workloads
+max_parallel_workers_per_gather = 4
+max_parallel_workers = 8   -- total parallel workers available (cap at CPU cores)</div>
+
+      <h2>Connection Pooling with PgBouncer</h2>
+      <div class="code-block">-- PostgreSQL problem: each connection spawns a backend process (2-5MB RAM each)
+-- 1000 connections = 2-5GB RAM just for idle connections
+-- Context switching between processes degrades performance at high connection counts
+-- Solution: PgBouncer sits between applications and PostgreSQL
+
+-- PgBouncer pooling modes:
+-- Session pooling: client <-> server connection held for client's entire session
+--   Compatible with all PostgreSQL features including prepared statements
+--   Little benefit over direct connections for short-lived application connections
+
+-- Transaction pooling: server connection released after each transaction completes
+--   1000 app clients, only 50 have active transactions → 50 server connections
+--   Most resource-efficient; most widely used
+--   Limitations: SET, LISTEN, advisory locks, prepared statements need special handling
+
+-- Statement pooling: server connection released after each statement
+--   Requires explicit transaction management; rarely used
+
+-- pgbouncer.ini configuration example:
+[databases]
+mydb = host=127.0.0.1 port=5432 dbname=mydb
+
+[pgbouncer]
+listen_addr = 0.0.0.0
+listen_port = 6432
+auth_type = md5
+auth_file = /etc/pgbouncer/userlist.txt
+pool_mode = transaction        -- transaction pooling
+default_pool_size = 50         -- 50 server connections per database/user pair
+max_client_conn = 1000         -- max clients PgBouncer accepts
+min_pool_size = 10             -- keep at least 10 server connections ready
+reserve_pool_size = 5          -- emergency reserve when pool is full
+server_idle_timeout = 600      -- close idle server connections after 10 min
+server_lifetime = 3600         -- recycle server connections every hour
+
+-- App connects to PgBouncer at port 6432 instead of PostgreSQL at 5432
+-- PgBouncer handles all multiplexing transparently
+
+-- Check PgBouncer status:
+-- SHOW POOLS;   -- client wait count, server connections per pool
+-- SHOW STATS;   -- request rate, avg query time, bytes transferred</div>
+
+      <h2>Query-Level Tuning</h2>
+      <div class="code-block">-- Planner statistics: run ANALYZE regularly
+ANALYZE orders;  -- updates pg_statistic for all columns in table
+
+-- Custom statistics targets for highly selective columns:
+ALTER TABLE orders ALTER COLUMN status SET STATISTICS 500;
+-- Default value = 100; planner uses ~100 histogram buckets for that column
+-- For columns with skewed distributions or used in complex queries, 200-500 is better
+
+-- Random page cost: how expensive random I/O is vs sequential I/O
+-- Default: random_page_cost = 4.0  (4x more expensive than sequential)
+-- For SSDs: random_page_cost = 1.1-2.0  (sequential and random are nearly equal)
+-- For cloud storage (EBS gp3, persistent disk): random_page_cost = 1.5-2.0
+random_page_cost = 1.5    -- tune for your storage type
+
+-- enable_seqscan / enable_indexscan: planner hints
+-- NEVER SET THESE IN postgresql.conf
+-- Use temporarily in a session to test different plans:
+SET enable_seqscan = off;  -- force the planner to prefer indexes
+EXPLAIN ANALYZE SELECT ...;
+RESET enable_seqscan;      -- restore default
+-- If seq scan is faster: investigate why planner chose it (statistics stale?)</div>
+
+      <div class="tip-box">
+        <strong>Quick wins — implement these first:</strong>
+        <ol>
+          <li>Set <code>shared_buffers</code> to 25% of RAM (most impactful single change)</li>
+          <li>Set <code>effective_cache_size</code> to 75% of RAM</li>
+          <li>Set <code>random_page_cost = 1.5</code> if using SSDs</li>
+          <li>Enable <code>pg_stat_statements</code> to identify slow queries</li>
+          <li>Add indexes for high-seq_scan tables (check pg_stat_user_tables)</li>
+          <li>Tune autovacuum scale_factor for large, high-churn tables</li>
+          <li>Deploy PgBouncer in transaction mode if connection count > 100</li>
+        </ol>
+      </div>
+
+      <h2>Summary</h2>
+      <ul>
+        <li>Schema: use smallest correct data types; BIGSERIAL over UUID v4 for PKs; TIMESTAMPTZ over TIMESTAMP</li>
+        <li>FILLFACTOR below 100% enables HOT updates — critical for frequently updated rows</li>
+        <li>Autovacuum defaults are too conservative for high-churn tables; tune scale_factor per table</li>
+        <li>Watch XID age — autovacuum must freeze rows before ~2B transaction wraparound</li>
+        <li>shared_buffers = 25% RAM; effective_cache_size = 75% RAM; work_mem per operation (not per connection)</li>
+        <li>PgBouncer in transaction mode: 1000 app connections with 50 server connections → 95% connection overhead reduction</li>
+      </ul>
+    </article>
+  </main>
+
+  <footer class="page-footer">
+    <p>Part of the DBMS Series — <a href="/articles.html">View all articles</a></p>
+  </footer>
+</body>
+</html>

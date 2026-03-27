@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>CAP Theorem Deep Dive: Consistency, Availability and PACELC | Mudit Gupta</title>
+  <meta name="description" content="CAP theorem explained with real database examples, CP vs AP system design, PACELC extension, network partitions in practice, and consistency trade-off case studies." />
+  <link rel="stylesheet" href="/assets/css/articles.css" />
+  <style>
+    .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
+    .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; color: #1a1a1a; }
+    .article-content h3 { margin-top: 1.5rem; margin-bottom: 0.75rem; color: #1a1a1a; }
+    .article-content p { margin-bottom: 1rem; color: #333; }
+    .article-content ul, .article-content ol { margin-left: 2rem; margin-bottom: 1rem; }
+    .article-content li { margin-bottom: 0.5rem; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; white-space: pre; margin-bottom: 1rem; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    table th, table td { border: 1px solid #ddd; padding: 0.75rem; text-align: left; }
+    table th { background: #f0f0f0; font-weight: 600; }
+    .note-box { background: #fff8e1; border-left: 4px solid #f9a825; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .tip-box { background: #e8f5e9; border-left: 4px solid #43a047; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .danger-box { background: #ffebee; border-left: 4px solid #e53935; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a href="/" class="home-link">Mudit Gupta</a>
+      <div class="topbar-actions">
+        <a href="/articles.html" class="btn btn-outline">Articles</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <article class="article-content">
+      <p class="kicker">DBMS Series | Part 029</p>
+      <h1>CAP Theorem Deep Dive: Consistency, Availability and PACELC</h1>
+      <p class="meta">Distributed Systems | 26 min read</p>
+
+      <p>
+        Eric Brewer's CAP theorem (2000) states that a distributed data store can guarantee at most
+        two of three properties during a network partition: Consistency, Availability, and
+        Partition Tolerance. Understanding CAP — and its limitations — is fundamental to
+        choosing and designing distributed databases.
+      </p>
+
+      <h2>The Three Properties</h2>
+      <table>
+        <tr><th>Property</th><th>Definition</th><th>Practical meaning</th></tr>
+        <tr><td><strong>C</strong>onsistency</td><td>Every read receives the most recent write or an error</td><td>All nodes return the same (latest) data at any moment</td></tr>
+        <tr><td><strong>A</strong>vailability</td><td>Every request receives a (non-error) response, without guarantee of latest data</td><td>The system always responds; response may be stale</td></tr>
+        <tr><td><strong>P</strong>artition Tolerance</td><td>The system continues operating despite network message loss or delay between nodes</td><td>The system works even when nodes can't talk to each other</td></tr>
+      </table>
+
+      <div class="note-box">
+        <strong>CAP is about network partitions:</strong> Partition Tolerance is not optional in
+        any distributed system — networks DO fail. The real choice is: <em>when a partition
+        occurs, do you prioritize consistency or availability?</em> The theorem is better stated
+        as CP vs AP during a partition, not "pick 2 of 3".
+      </div>
+
+      <h2>CP Systems: Prioritize Consistency</h2>
+      <p>
+        When a partition occurs, CP systems stop responding (become unavailable) rather than
+        return potentially stale data.
+      </p>
+      <div class="code-block">-- CP Systems: HBase, MongoDB (majority write concern), ZooKeeper, etcd
+
+-- Example: ZooKeeper (coordination service)
+-- 5-node ZooKeeper cluster, quorum = 3
+-- Network partition splits cluster: 3 nodes on one side, 2 on the other
+
+-- Side with 3 nodes: forms quorum → continues serving reads AND writes
+-- Side with 2 nodes: cannot form quorum → REFUSES all operations (returns error)
+-- Consistency is maintained: no split-brain, no stale reads
+-- 2 nodes become unavailable (sacrifice availability for consistency)
+
+-- Real impact:
+-- Any service connecting ONLY to the 2-node partition gets "no leader available" error
+-- Services on the 3-node partition work normally
+-- Correct choice for: distributed locks, leader election, configuration service
+-- (better to fail than to allow two services to think they're both the leader)</div>
+
+      <h2>AP Systems: Prioritize Availability</h2>
+      <p>
+        When a partition occurs, AP systems continue responding with potentially stale data
+        rather than return errors.
+      </p>
+      <div class="code-block">-- AP Systems: Cassandra (ONE consistency), DynamoDB, CouchDB, Riak, DNS
+
+-- Example: Cassandra with 3 nodes, replication factor N=3, read/write at ONE
+-- Network partition splits: Nodes A+B on one side, Node C on the other
+
+-- Node C: isolated, but still accepts reads and writes → returns stale data!
+-- Nodes A+B: accept reads and writes → fully up-to-date
+
+-- Writes that hit Node C while isolated: go into its local storage
+-- When partition heals: anti-entropy background repair syncs the differences
+-- Final state: eventual consistency, potential conflict resolution needed
+
+-- Real impact for users:
+-- No errors, no downtime — but potentially stale reads
+-- E.g., a user who adds to cart on Node C during partition might not see their
+--   updated cart on Node A immediately after partition heals
+-- Acceptable for: shopping carts, user sessions, social feeds, telemetry</div>
+
+      <h2>The PACELC Model: Beyond CAP</h2>
+      <p>
+        PACELC (Daniel Abadi, 2012) extends CAP to also describe the latency-consistency
+        trade-off that applies <em>even when no partition exists</em>.
+      </p>
+      <div class="code-block">-- PACELC: If Partition (P), choose Availability (A) or Consistency (C);  
+--         Else (E — normal operation), choose Latency (L) or Consistency (C)
+
+-- Most real-world decisions aren't about partitions (rare) but about latency vs consistency
+-- when the system is healthy (the "else" branch).
+
+-- Example: synchronous vs asynchronous replication
+-- Synchronous (ELC — else latency or consistency: chooses C):
+--   Every write waits for replica to confirm
+--   Higher latency, strong consistency
+--   PostgreSQL synchronous_standby_names = 'replica1'
+
+-- Asynchronous (ELL — chooses L):
+--   Write acks immediately, replica catches up in background
+--   Lower latency, replica may lag seconds/minutes behind
+
+-- PACELC classification of common databases:
+-- PostgreSQL (sync): PA/EC  (partition: available; else: consistent)
+-- Cassandra (LWW):  PA/EL  (partition: available; else: low latency)  
+-- MongoDB (strong): PC/EC  (partition: consistent; else: consistent)
+-- DynamoDB:         PA/EL  (partition: available; else: low latency by default)</div>
+
+      <h2>Network Partitions in Practice</h2>
+      <div class="code-block">-- Network partitions are more common than disk failures:
+-- Types:
+-- 1. Complete partition: nodes cannot communicate at all (datacenter link failure)
+-- 2. Partial partition: some nodes can reach some others (asymmetric routing issue)
+-- 3. Slow network: messages arrive but very delayed (appear as timeouts)
+-- 4. Process pauses: long GC pauses, VM migration (node appears unresponsive)
+
+-- Partial partitions are the hardest:
+-- Leader believes it's connected to quorum
+-- But some messages between specific pairs are lost
+-- Results in inconsistent state that is hard to detect
+
+-- Detection: heartbeats + timeouts
+-- Every node sends heartbeats every 1-5 seconds
+-- If no heartbeat in N seconds, assume partition
+
+-- Timeout tuning trade-offs:
+-- Too short (1s): false positives on slow network → unnecessary failovers
+-- Too long (30s): 30s of downtime before detection
+-- Production sweet spot: 5-10s timeout with 3 missed heartbeats</div>
+
+      <h2>CAP in Practice: Real Database Choices</h2>
+      <table>
+        <tr><th>Database</th><th>CAP Position</th><th>Trade-off Accepted</th></tr>
+        <tr><td>PostgreSQL (single node)</td><td>CA (no partition tolerance)</td><td>No distributed claims; single server can't partition itself</td></tr>
+        <tr><td>PostgreSQL + Patroni</td><td>CP</td><td>Unavailable during partition; quorum required to proceed</td></tr>
+        <tr><td>MySQL Group Replication</td><td>CP</td><td>Group quorum required; minority partitions reject writes</td></tr>
+        <tr><td>Cassandra (QUORUM)</td><td>CP</td><td>Strong consistency; R+W>N means unavailability if nodes are down</td></tr>
+        <tr><td>Cassandra (ONE)</td><td>AP</td><td>Always available; potentially stale reads from offline node</td></tr>
+        <tr><td>DynamoDB</td><td>AP</td><td>Always available; eventually consistent by default</td></tr>
+        <tr><td>Google Spanner</td><td>CP</td><td>Globally consistent; uses atomic clocks (TrueTime) to order transactions</td></tr>
+        <tr><td>CockroachDB</td><td>CP</td><td>ACID across nodes; consensus writes via Raft groups</td></tr>
+      </table>
+
+      <h2>Google Spanner: Practically CA+P</h2>
+      <div class="code-block">-- Spanner achieves "practically CA" by minimizing partition probability:
+-- -- Redundant fiber within datacenters
+-- -- Cross-datacenter connections with SLA
+-- -- TrueTime: GPS + atomic clocks give bounded time uncertainty (< 7ms)
+-- -- External consistency (essentially linearizability) via TrueTime
+
+-- How TrueTime works:
+-- Every read/write tagged with TrueTime interval [earliest, latest]
+-- Commit waits until earliest > latest of conflicting transaction
+-- This "commit wait" (typically < 10ms) guarantees causal ordering globally
+
+-- Spanner is CP in CAP terms, but partitions are so rare (hardware redundancy)
+-- and partition tolerance is so brief that it's practically CA in practice
+-- The cost: higher write latency due to commit wait</div>
+
+      <div class="tip-box">
+        <strong>CAP theorem limitations to know:</strong>
+        <ul>
+          <li>CAP uses a very specific definition of "consistency" (linearizability), not the ACID "C"</li>
+          <li>CAP is binary — real systems have tunable consistency (quorum)</li>
+          <li>CAP says nothing about performance, durability, or operational complexity</li>
+          <li>PACELC is more practically useful because it covers the normal (no-partition) case too</li>
+        </ul>
+      </div>
+
+      <h2>Summary</h2>
+      <ul>
+        <li>CAP: during a network partition, distributed systems must choose CP (consistency) or AP (availability)</li>
+        <li>CP systems refuse requests when they can't confirm consistency (ZooKeeper, etcd, MongoDB)</li>
+        <li>AP systems return possibly stale data rather than error (Cassandra, DynamoDB, Riak)</li>
+        <li>PACELC extends CAP: even without partitions, systems trade latency (faster) vs consistency (accurate)</li>
+        <li>Most decisions are latency vs consistency (PACELC's E branch), not partition-handling (rare)</li>
+        <li>Google Spanner uses TrueTime to achieve practical global consistency with bounded partition risk</li>
+      </ul>
+    </article>
+  </main>
+
+  <footer class="page-footer">
+    <p>Part of the DBMS Series — <a href="/articles.html">View all articles</a></p>
+  </footer>
+</body>
+</html>

@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>Advanced Indexing: B+ Tree Internals, Composite, Covering and Partial Indexes | Mudit Gupta</title>
+  <meta name="description" content="Deep dive into B+ tree index structure, composite index column ordering rules, covering and partial indexes, GIN for JSONB/arrays, and index planning." />
+  <link rel="stylesheet" href="/assets/css/articles.css" />
+  <style>
+    .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
+    .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; color: #1a1a1a; }
+    .article-content h3 { margin-top: 1.5rem; margin-bottom: 0.75rem; color: #1a1a1a; }
+    .article-content p { margin-bottom: 1rem; color: #333; }
+    .article-content ul, .article-content ol { margin-left: 2rem; margin-bottom: 1rem; }
+    .article-content li { margin-bottom: 0.5rem; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; white-space: pre; margin-bottom: 1rem; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    table th, table td { border: 1px solid #ddd; padding: 0.75rem; text-align: left; }
+    table th { background: #f0f0f0; font-weight: 600; }
+    .note-box { background: #fff8e1; border-left: 4px solid #f9a825; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .tip-box { background: #e8f5e9; border-left: 4px solid #43a047; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .danger-box { background: #ffebee; border-left: 4px solid #e53935; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a href="/" class="home-link">Mudit Gupta</a>
+      <div class="topbar-actions">
+        <a href="/articles.html" class="btn btn-outline">Articles</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <article class="article-content">
+      <p class="kicker">DBMS Series | Part 038</p>
+      <h1>Advanced Indexing: B+ Tree Internals, Composite, Covering and Partial Indexes</h1>
+      <p class="meta">Internals | 28 min read</p>
+
+      <p>
+        Indexing is the single most impactful performance lever available to application
+        developers. A well-designed index can turn a 10-second query into 10 milliseconds.
+        A poorly designed one wastes storage, slows writes, and misleads the query planner.
+        This article covers how B+ trees work and how to design indexes that actually get used.
+      </p>
+
+      <h2>B-Tree vs B+ Tree</h2>
+      <div class="code-block">-- B-Tree (general):
+-- All nodes (internal and leaf) can store data records
+-- Searching terminates as soon as a key is found in an internal node
+
+-- B+ Tree (used by virtually all databases):
+-- Internal nodes store ONLY keys (used for routing)
+-- ALL data/pointers are in leaf nodes
+-- Leaf nodes are linked in a doubly linked list
+-- This means: range scans are O(log N) + O(range size) — follow the leaf list
+
+-- Example B+ tree structure (simplified, order 3):
+--
+-- Root (internal):     [30 | 60]
+--                     /    |    \
+-- Level 1:     [10|20] [30|45] [60|70|80]
+--              /  |  \    ...
+-- Leaf level: [5|8]->[10|15]->[20|25]->[30|35]->[45|50]->[60|65]->...
+--                   ALL linked as a list
+--
+-- To find rows with key BETWEEN 20 AND 50:
+-- 1. Navigate from root to leaf containing 20 (O log N)
+-- 2. Follow forward pointers: 20→25→30→35→45→50 (O range)
+-- No need to go back to root for each value — this is the B+ tree advantage</div>
+
+      <h2>B+ Tree Node Structure</h2>
+      <div class="code-block">-- Each page in a B+ tree index is 8KB (default in PostgreSQL)
+-- Internal node: [P0 | K1 | P1 | K2 | P2 | ... | Kn | Pn]
+--   Ki = key value, Pi = pointer to child page
+-- Leaf node:     [K1 | TID1 | K2 | TID2 | ... | Kn | TIDn | Next_leaf_ptr]
+--   TID = Tuple ID (ctid in PostgreSQL) = (page number, item offset)
+--   Next_leaf_ptr enables forward range scans without going back to root
+
+-- Tree height determines I/O cost:
+-- Branching factor for a typical index on an integer (8 bytes):
+--   8192 bytes / (8 key + 6 ctid + overhead) ≈ ~300-400 entries per leaf page
+--   Internal node: 8192 / (8 key + 8 ptr) ≈ ~500 entries per internal page
+--   For a 10M row table: height ≈ 3-4 levels
+-- This means: ANY point lookup requires at most 3-4 page reads
+-- The upper levels are usually cached in shared_buffers after warmup
+
+-- Checking index stats (PostgreSQL):
+SELECT
+    schemaname,
+    tablename,
+    indexname,
+    pg_size_pretty(pg_relation_size(indexrelid)) AS index_size,
+    idx_scan,
+    idx_tup_read,
+    idx_tup_fetch
+FROM pg_stat_user_indexes
+ORDER BY pg_relation_size(indexrelid) DESC;</div>
+
+      <h2>Composite Index Design Rules</h2>
+      <div class="code-block">-- Composite index: index on multiple columns (col1, col2, col3)
+-- The ORDER of columns in the index definition is critical
+
+-- Rule 1: Equality conditions first
+-- Index (status, created_at) for:
+-- WHERE status = 'active' AND created_at > '2024-01-01'
+-- → status (equality) first, created_at (range) second → optimal
+
+-- Rule 2: Range condition at the END
+-- Index (col1, col2) searches:
+-- WHERE col1 = 'X' AND col2 > 100   ← col1 equality, col2 range: good ✓
+-- WHERE col1 > 100 AND col2 = 'X'   ← col1 range first: col2 unusable by BTree
+-- After a range, the index tree cannot skip to next matching value
+
+-- Rule 3: ORDER BY / GROUP BY benefit
+-- Index (user_id, created_at) for:
+-- SELECT * FROM orders WHERE user_id = 5 ORDER BY created_at DESC
+-- → Both conditions use the index; no sort step needed → very fast
+
+-- Real example:
+-- Table: events (user_id, event_type, occurred_at, payload)
+-- Common query pattern: events for user X, of type Y, in last 30 days
+
+CREATE INDEX idx_events_user_type_time
+ON events (user_id, event_type, occurred_at DESC);
+-- This can serve:
+-- WHERE user_id = 5 AND event_type = 'click' AND occurred_at > NOW() - INTERVAL '30d'
+-- ORDER BY occurred_at DESC  (already sorted by index)
+-- → Index Scan with 0 extra sort, scans only matching leaf pages
+
+-- Rule 4: The leftmost prefix rule
+-- Composite index on (A, B, C) can serve:
+-- WHERE A = x                   ✓
+-- WHERE A = x AND B = y         ✓
+-- WHERE A = x AND B = y AND C=z ✓
+-- WHERE B = y                   ✗ (A not constrained — full index scan or seq scan)
+-- WHERE A = x AND C = z         ✓ for A, C is not usable (B missing in middle)</div>
+
+      <h2>Covering Indexes (Index-Only Scans)</h2>
+      <div class="code-block">-- A covering index includes ALL columns needed to satisfy a query
+-- PostgreSQL can do an Index-Only Scan: never touches the heap (actual table)
+-- Massive performance win for frequently read hot queries
+
+-- Example: order summary dashboard
+-- Query: SELECT user_id, status, COUNT(*) FROM orders GROUP BY user_id, status
+
+-- Without covering index: Index Scan + heap fetch for each row
+-- With covering index:
+CREATE INDEX idx_orders_covering
+ON orders (user_id, status)
+INCLUDE (id);   -- INCLUDE non-key columns (PostgreSQL 11+)
+-- INCLUDE columns are stored in leaf nodes but not used for tree navigation
+-- They satisfy SELECT projection without going to heap
+
+-- INCLUDE vs key columns:
+-- Key columns (listed before INCLUDE): used for tree structure, can be in WHERE/ORDER BY
+-- INCLUDE columns: only stored in leaf pages, satisfy projections in SELECT
+
+-- Checking if index-only scan is used:
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT user_id, status, COUNT(*)
+FROM orders
+WHERE user_id = 123
+GROUP BY user_id, status;
+-- Look for: "Index Only Scan" and "Heap Fetches: 0"
+-- If Heap Fetches > 0: visibility map not up to date (run VACUUM to fix)
+
+-- Visibility map and index-only scans:
+-- PostgreSQL maintains a visibility map: bit per page indicating all rows are visible
+-- If all-visible bit is set: index-only scan is safe (no heap fetch needed)
+-- AUTOVACUUM keeps visibility map updated; after bulk INSERT, run VACUUM manually</div>
+
+      <h2>Partial Indexes</h2>
+      <div class="code-block">-- A partial index indexes only a SUBSET of rows (with a WHERE clause)
+-- Much smaller than full index; faster, less storage, fewer write amplifications
+
+-- Common pattern: index only active/pending/unprocessed rows
+-- Table has 10M rows; 9.9M are processed; 100K are pending
+-- A full index on 10M rows for queries always filtered to 100K is wasteful
+
+CREATE INDEX idx_orders_pending
+ON orders (created_at, priority)
+WHERE status = 'pending';
+-- Index contains only pending orders (~100K rows)
+-- Queries like: WHERE status = 'pending' AND created_at > ... automatically use it
+-- After order is processed: status changes → row "falls out" of the partial index → removed
+-- Index stays small forever regardless of total table size
+
+-- Other partial index use cases:
+-- Unique constraint only for non-deleted rows (soft delete pattern):
+CREATE UNIQUE INDEX idx_users_email_active
+ON users (email)
+WHERE deleted_at IS NULL;
+-- Allows multiple users with same email as long as deleted_at IS NOT NULL (deleted)
+
+-- Partial index for hot path queries:
+CREATE INDEX idx_events_unprocessed
+ON events (created_at)
+WHERE processed = false AND priority > 5;
+-- Very selective; query planner will prefer it for matching queries</div>
+
+      <h2>GIN and GiST Indexes</h2>
+      <div class="code-block">-- GIN (Generalized Inverted Index): for multi-valued types
+-- Ideal for: arrays, JSONB, full-text search (tsvector)
+-- Structure: inverted index — maps each element to rows that contain it
+
+-- JSONB indexing:
+CREATE INDEX idx_products_attributes ON products USING GIN (attributes);
+-- Supports operators: @> (contains), ? (key exists), ?| (any key)
+-- Query: SELECT * FROM products WHERE attributes @> '{"color": "blue"}';
+
+-- Array indexing:
+CREATE INDEX idx_posts_tags ON posts USING GIN (tags);
+-- Query: SELECT * FROM posts WHERE tags @> ARRAY['database', 'performance'];
+
+-- Full-text search:
+ALTER TABLE articles ADD COLUMN search_vector tsvector;
+UPDATE articles SET search_vector = to_tsvector('english', title || ' ' || body);
+CREATE INDEX idx_articles_fts ON articles USING GIN (search_vector);
+-- Query: SELECT * FROM articles WHERE search_vector @@ plainto_tsquery('index optimization');
+
+-- GiST (Generalized Search Tree): for geometric / range / text similarity
+-- Supports: PostGIS geometry, range types, nearest-neighbor searches
+CREATE INDEX idx_locations_geo ON locations USING GIST (coordinates);
+-- Query: Find all locations within 5km of a point
+SELECT * FROM locations
+WHERE ST_DWithin(coordinates, ST_Point(-73.9857, 40.7484)::geography, 5000);
+
+-- Concurrent index creation (no table lock):
+CREATE INDEX CONCURRENTLY idx_large_table_col
+ON large_table (col);
+-- Takes longer; runs in background; reads table in multiple passes
+-- Recommended for production tables — avoids blocking writes</div>
+
+      <h2>Index Overhead and Maintenance</h2>
+      <div class="code-block">-- Every INSERT, UPDATE, DELETE must update all indexes on the table
+-- Indexes consume storage:
+SELECT
+    schemaname || '.' || tablename AS table,
+    pg_size_pretty(pg_total_relation_size(schemaname || '.' || tablename)) AS total_size,
+    pg_size_pretty(pg_relation_size(schemaname || '.' || tablename)) AS table_only,
+    pg_size_pretty(pg_indexes_size(schemaname || '.' || tablename)) AS indexes_size
+FROM pg_tables
+WHERE schemaname = 'public'
+ORDER BY pg_total_relation_size(schemaname || '.' || tablename) DESC;
+
+-- Index bloat: B+ trees accumulate deleted/dead entries when rows are updated/deleted
+-- PostgreSQL VACUUM removes dead tuples but may not reclaim space from index
+-- VACUUM also updates visibility map (needed for index-only scans)
+-- REINDEX CONCURRENTLY rebuilds index from scratch (fixes severe bloat):
+REINDEX INDEX CONCURRENTLY idx_orders_user_status;
+
+-- Unused indexes: identify and drop them
+SELECT
+    schemaname || '.' || relname AS table,
+    indexrelname AS index,
+    pg_size_pretty(pg_relation_size(indexrelid)) AS size,
+    idx_scan AS scans_since_stats_reset
+FROM pg_stat_user_indexes
+WHERE idx_scan = 0
+  AND indexrelid NOT IN (SELECT conindid FROM pg_constraint WHERE contype IN ('p','u'))
+ORDER BY pg_relation_size(indexrelid) DESC;
+-- Indexes with 0 scans since last statistics reset are likely unused
+-- Drop them to reduce write overhead and storage</div>
+
+      <div class="tip-box">
+        <strong>Index design checklist for new queries:</strong>
+        <ol>
+          <li>Get the query's execution plan with EXPLAIN ANALYZE</li>
+          <li>Identify Sequential Scans on large tables — candidate for indexing</li>
+          <li>Put equality conditions first in composite index, range conditions last</li>
+          <li>Add INCLUDE columns if the query selects only a few additional columns</li>
+          <li>Use partial index if only a fraction of rows are queried</li>
+          <li>After creating, verify plan uses the index (EXPLAIN ANALYZE again)</li>
+          <li>Monitor idx_scan on pg_stat_user_indexes — confirm the index is used in production</li>
+        </ol>
+      </div>
+
+      <h2>Summary</h2>
+      <ul>
+        <li>B+ trees store data only in leaf nodes; internal nodes route; leaf nodes are linked for range scans</li>
+        <li>Composite index column order: equality first, ORDER BY next, range last</li>
+        <li>Leftmost prefix rule: skip columns in the middle breaks index usage</li>
+        <li>Covering indexes (INCLUDE) enable index-only scans that never touch the heap</li>
+        <li>Partial indexes index a subset of rows — stay small, reduce write overhead</li>
+        <li>GIN for multi-valued types (JSONB, arrays, full-text); GiST for geometry and ranges</li>
+        <li>Monitor and drop unused indexes; their write overhead persists even when unread</li>
+      </ul>
+    </article>
+  </main>
+
+  <footer class="page-footer">
+    <p>Part of the DBMS Series — <a href="/articles.html">View all articles</a></p>
+  </footer>
+</body>
+</html>

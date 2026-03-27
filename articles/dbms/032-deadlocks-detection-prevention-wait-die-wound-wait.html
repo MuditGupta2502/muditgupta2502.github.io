@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>Deadlocks: Detection, Prevention, Wait-Die and Wound-Wait | Mudit Gupta</title>
+  <meta name="description" content="Database deadlock mechanics, waits-for graph detection, timeout-based detection, prevention protocols (wait-die, wound-wait), lock ordering, and starvation avoidance." />
+  <link rel="stylesheet" href="/assets/css/articles.css" />
+  <style>
+    .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
+    .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; color: #1a1a1a; }
+    .article-content h3 { margin-top: 1.5rem; margin-bottom: 0.75rem; color: #1a1a1a; }
+    .article-content p { margin-bottom: 1rem; color: #333; }
+    .article-content ul, .article-content ol { margin-left: 2rem; margin-bottom: 1rem; }
+    .article-content li { margin-bottom: 0.5rem; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; white-space: pre; margin-bottom: 1rem; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    table th, table td { border: 1px solid #ddd; padding: 0.75rem; text-align: left; }
+    table th { background: #f0f0f0; font-weight: 600; }
+    .note-box { background: #fff8e1; border-left: 4px solid #f9a825; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .tip-box { background: #e8f5e9; border-left: 4px solid #43a047; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .danger-box { background: #ffebee; border-left: 4px solid #e53935; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a href="/" class="home-link">Mudit Gupta</a>
+      <div class="topbar-actions">
+        <a href="/articles.html" class="btn btn-outline">Articles</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <article class="article-content">
+      <p class="kicker">DBMS Series | Part 032</p>
+      <h1>Deadlocks: Detection, Prevention, Wait-Die and Wound-Wait</h1>
+      <p class="meta">Transactions | 25 min read</p>
+
+      <p>
+        A deadlock occurs when two or more transactions wait for each other to release locks,
+        forming a circular dependency that no transaction can break. Every system using locks
+        must handle deadlocks — either by detecting and breaking them, or by preventing them
+        from forming in the first place.
+      </p>
+
+      <h2>The Classic Deadlock</h2>
+      <div class="code-block">-- Transaction T1 wants A then B; T2 wants B then A
+-- T1:  LOCK A (success)
+-- T2:  LOCK B (success)
+-- T1:  LOCK B → WAITS (B is held by T2)
+-- T2:  LOCK A → WAITS (A is held by T1)
+-- Both wait forever → DEADLOCK
+
+-- Real PostgreSQL example:
+-- Session 1:
+BEGIN;
+UPDATE accounts SET balance = balance - 100 WHERE id = 1001;  -- locks row 1001
+-- (session 2 runs next before session 1 continues)
+
+-- Session 2:
+BEGIN;
+UPDATE accounts SET balance = balance - 100 WHERE id = 1002;  -- locks row 1002
+UPDATE accounts SET balance = balance + 100 WHERE id = 1001;  -- WAITS for row 1001
+
+-- Session 1 (continues):
+UPDATE accounts SET balance = balance + 100 WHERE id = 1002;  -- WAITS for row 1002
+-- DEADLOCK: T1 waits on T2 (row 1002), T2 waits on T1 (row 1001)
+-- PostgreSQL detects this and aborts one transaction with:
+-- ERROR: deadlock detected
+-- DETAIL: Process 12345 waits for ShareLock on transaction 67890</div>
+
+      <h2>Deadlock Detection: Wait-for Graph</h2>
+      <div class="code-block">-- A waits-for graph (WFG) represents lock dependencies:
+-- Nodes = transactions
+-- Edge T1 → T2: T1 is WAITING for a lock held by T2
+
+-- Deadlock = cycle in the WFG
+
+-- Example WFG with deadlock:
+-- T1 → T2 (T1 waits for lock held by T2)
+-- T2 → T3 (T2 waits for lock held by T3)
+-- T3 → T1 (T3 waits for lock held by T1)
+-- Cycle: T1 → T2 → T3 → T1 → DEADLOCK
+
+-- Victim selection criteria (database chooses which transaction to abort):
+-- Youngest transaction (least work done; cheapest to retry)
+-- Transaction holding fewest locks (least disruption to others)
+-- Transaction with smallest "cost" (used by MySQL: rows examined × lock count)
+
+-- PostgreSQL deadlock detection:
+-- Runs every deadlock_timeout milliseconds (default: 1 second)
+-- If T1 has been waiting > 1s, trigger WFG cycle check
+-- If cycle found, abort one transaction (typically the one that triggered the check)
+
+-- View lock waits in PostgreSQL:
+SELECT pid, wait_event_type, wait_event, query
+FROM pg_stat_activity
+WHERE wait_event_type = 'Lock';
+
+-- View the waits-for graph:
+SELECT blocked_locks.pid AS blocked_pid,
+       blocking_locks.pid AS blocking_pid,
+       blocked_activity.query AS blocked_query,
+       blocking_activity.query AS blocking_query
+FROM pg_catalog.pg_locks blocked_locks
+JOIN pg_catalog.pg_stat_activity blocked_activity ON blocked_activity.pid = blocked_locks.pid
+JOIN pg_catalog.pg_locks blocking_locks
+    ON blocking_locks.locktype = blocked_locks.locktype
+    AND blocking_locks.relation = blocked_locks.relation
+    AND blocking_locks.pid != blocked_locks.pid
+JOIN pg_catalog.pg_stat_activity blocking_activity ON blocking_activity.pid = blocking_locks.pid
+WHERE NOT blocked_locks.granted;</div>
+
+      <h2>Deadlock Prevention Strategies</h2>
+      <h3>Lock Ordering (Most Practical)</h3>
+      <div class="code-block">-- Ensure all transactions acquire locks in the SAME ORDER
+-- If T1 and T2 both always lock account IDs in ascending order, deadlock is impossible
+
+-- BAD (deadlock-prone): each transaction locks in a different order
+-- T1: UPDATE ... WHERE id = 1001; then UPDATE ... WHERE id = 1002
+-- T2: UPDATE ... WHERE id = 1002; then UPDATE ... WHERE id = 1001
+
+-- GOOD: enforce ascending ID order in application code
+-- When transferring between accounts 1001 and 1002:
+-- Always update the lower ID first, then higher ID
+def transfer(from_id, to_id, amount):
+    first_id  = min(from_id, to_id)
+    second_id = max(from_id, to_id)
+    # Always lock in ascending order: no circular wait possible
+    execute("UPDATE accounts SET balance = balance - ? WHERE id = ?", amount, first_id)
+    execute("UPDATE accounts SET balance = balance + ? WHERE id = ?", amount, second_id)</div>
+
+      <h3>Wait-Die Protocol</h3>
+      <div class="code-block">-- Each transaction has a unique timestamp (older transaction = lower timestamp)
+-- Rule: if T_old waits for T_young → WAIT (older waits for younger)
+--       if T_young waits for T_old → DIE (younger aborts, restarts with SAME timestamp)
+
+-- Example (timestamp: lower = older):
+-- T1 (ts=10) wants lock held by T2 (ts=20)
+-- T1 is older than T2 → T1 WAITS (old waits for young)
+
+-- T3 (ts=30) wants lock held by T1 (ts=10)
+-- T3 is younger than T1 → T3 DIEs (young dies when requesting from old)
+
+-- Key property:
+-- A transaction can only be blocked by an OLDER transaction
+-- Older transactions never abort waiting for younger ones
+-- Older transactions keep getting older → eventually get ALL locks → no starvation
+-- Younger transactions may abort repeatedly but are restarted with the ORIGINAL timestamp
+--   (eventually they become "older" and won't be aborted anymore)</div>
+
+      <h3>Wound-Wait Protocol</h3>
+      <div class="code-block">-- Same timestamp assignment; opposite rule to wait-die:
+-- Rule: if T_old wants lock held by T_young → WOUND T_young (abort T_young; old gets lock)
+--       if T_young wants lock held by T_old  → WAIT
+
+-- Example:
+-- T1 (ts=10) wants lock held by T2 (ts=20)
+-- T1 is older → T1 WOUNDS T2 (T2 is aborted so T1 can proceed)
+
+-- T3 (ts=30) wants lock held by T1 (ts=10)
+-- T3 is younger → T3 WAITS
+
+-- Comparison with Wait-Die:
+-- Wait-Die: requester decides (requestor is old → wait; requester is young → die)
+-- Wound-Wait: holder decides (requester is old → wound holder; requester is young → wait)
+-- Both: non-preemptive for younger waiting for older → older transactions progress
+-- Both: reuse original timestamp on restart → starvation-free
+
+-- In practice: wait-die is more common because wound-wait preempts in-progress work
+-- Aborting T2 mid-execution wastes more work than T3 aborting before doing much</div>
+
+      <h2>Timeout-Based Approach</h2>
+      <div class="code-block">-- Simplest approach: wait up to N milliseconds, then abort
+-- PostgreSQL:
+SET lock_timeout = '5s';  -- abort if waiting for a lock longer than 5 seconds
+SET statement_timeout = '30s';  -- abort statement after 30 seconds total
+
+-- Per-transaction:
+BEGIN;
+SET LOCAL lock_timeout = '2s';  -- applies only to this transaction
+SELECT * FROM hot_table WHERE id = 1 FOR UPDATE;
+-- If lock not acquired in 2s: ERROR: canceling statement due to lock timeout
+
+-- Pros: simple, no complex WFG tracking
+-- Cons: may abort transactions that weren't in a true deadlock (false positives)
+-- Best for: application-level locks, advisory locks, occasional contention</div>
+
+      <h2>Starvation</h2>
+      <div class="code-block">-- Starvation: a transaction waits indefinitely because other transactions
+-- keep getting priority and it never gets the locks it needs
+
+-- Example:
+-- T1 holds lock on A; T2 is waiting for A
+-- T1 releases → T3 immediately grabs A → T2 still waiting
+-- T3 releases → T4 immediately grabs A → T2 still waiting...
+-- T2 may wait forever if the DB always prefers other requesters
+
+-- Prevention using FIFO queues:
+-- Most production DBs: locks are granted in FIFO order when multiple transactions wait
+-- First come, first served → no starvation (T2 gets A before T4, T5, etc.)
+
+-- Wait-Die/Wound-Wait also prevent starvation:
+-- Restarted transactions get their original (old) timestamp
+-- Eventually, an aborted transaction becomes the "oldest" in the system
+-- As the oldest transaction, it will never be preempted → guaranteed to make progress</div>
+
+      <div class="tip-box">
+        <strong>Practical deadlock prevention in application code:</strong>
+        <ol>
+          <li>Always update/lock rows in a consistent order (by primary key, alphabetically, etc.)</li>
+          <li>Keep transactions short — less lock holding time = less overlap = less chance of deadlock</li>
+          <li>Avoid user interaction inside a database transaction (user "thinking time" holds locks)</li>
+          <li>Use SELECT FOR UPDATE SKIP LOCKED for job queues — avoids waiting entirely</li>
+          <li>Implement retry logic: catch deadlock errors and retry the transaction (deadlocks are rare)</li>
+        </ol>
+      </div>
+
+      <h2>Summary</h2>
+      <ul>
+        <li>Deadlock: circular wait among transactions — T1 waits for T2 waits for ... waits for T1</li>
+        <li>Detection via waits-for graph: cycle = deadlock; victim selection aborts cheapest transaction</li>
+        <li>Lock ordering: simple and effective — all transactions acquire locks in same order</li>
+        <li>Wait-Die: older waits for younger; younger dies — older transactions eventually succeed</li>
+        <li>Wound-Wait: older wounds younger (aborts it); younger waits for older</li>
+        <li>FIFO lock queues prevent starvation; timestamp-based protocols plus original-timestamp restart guarantee progress</li>
+      </ul>
+    </article>
+  </main>
+
+  <footer class="page-footer">
+    <p>Part of the DBMS Series — <a href="/articles.html">View all articles</a></p>
+  </footer>
+</body>
+</html>

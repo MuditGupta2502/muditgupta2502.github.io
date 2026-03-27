@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>Access Control: DAC, MAC, RBAC, ABAC and PostgreSQL Row-Level Security | Mudit Gupta</title>
+  <meta name="description" content="Database access control models (DAC, MAC, RBAC, ABAC), PostgreSQL roles and privileges, role inheritance, and Row-Level Security (RLS) policies with real examples." />
+  <link rel="stylesheet" href="/assets/css/articles.css" />
+  <style>
+    .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
+    .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; color: #1a1a1a; }
+    .article-content h3 { margin-top: 1.5rem; margin-bottom: 0.75rem; color: #1a1a1a; }
+    .article-content p { margin-bottom: 1rem; color: #333; }
+    .article-content ul, .article-content ol { margin-left: 2rem; margin-bottom: 1rem; }
+    .article-content li { margin-bottom: 0.5rem; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; white-space: pre; margin-bottom: 1rem; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    table th, table td { border: 1px solid #ddd; padding: 0.75rem; text-align: left; }
+    table th { background: #f0f0f0; font-weight: 600; }
+    .note-box { background: #fff8e1; border-left: 4px solid #f9a825; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .tip-box { background: #e8f5e9; border-left: 4px solid #43a047; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .danger-box { background: #ffebee; border-left: 4px solid #e53935; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a href="/" class="home-link">Mudit Gupta</a>
+      <div class="topbar-actions">
+        <a href="/articles.html" class="btn btn-outline">Articles</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <article class="article-content">
+      <p class="kicker">DBMS Series | Part 043</p>
+      <h1>Access Control: DAC, MAC, RBAC, ABAC and PostgreSQL Row-Level Security</h1>
+      <p class="meta">Security | 22 min read</p>
+
+      <p>
+        Access control determines who can do what to which data. In databases, this spans
+        from which users can connect, to which tables they can query, to which individual
+        rows they can see. The principle of least privilege — every user gets the minimum
+        access required for their function — is the foundation of secure database design.
+      </p>
+
+      <h2>Access Control Models</h2>
+      <table>
+        <tr><th>Model</th><th>Key Idea</th><th>Who Manages Access</th><th>Typical Use</th></tr>
+        <tr><td><strong>DAC</strong> (Discretionary)</td><td>Object owner grants permissions to others</td><td>Object owner</td><td>Traditional UNIX, RDBMS GRANT/REVOKE</td></tr>
+        <tr><td><strong>MAC</strong> (Mandatory)</td><td>System enforces security labels; owner cannot override</td><td>System/security policy</td><td>Military, SELinux, Oracle Label Security</td></tr>
+        <tr><td><strong>RBAC</strong> (Role-Based)</td><td>Permissions attached to roles; users assigned to roles</td><td>Administrator</td><td>Most enterprise databases, application permissions</td></tr>
+        <tr><td><strong>ABAC</strong> (Attribute-Based)</td><td>Policies use attributes of user, resource, and environment</td><td>Policy engine</td><td>Complex multi-tenant apps, fine-grained APIs</td></tr>
+      </table>
+
+      <h2>PostgreSQL Roles and Privileges</h2>
+      <div class="code-block">-- PostgreSQL has no distinction between "users" and "groups" — both are ROLES
+-- A role with LOGIN privilege can connect (acts as a user)
+-- A role without LOGIN is a group role (used to bundle privileges)
+
+-- Create roles:
+CREATE ROLE app_read NOLOGIN;    -- read-only group role
+CREATE ROLE app_write NOLOGIN;   -- read-write group role
+CREATE ROLE admin_role NOLOGIN;  -- admin group role
+
+-- Create individual user accounts:
+CREATE ROLE alice LOGIN PASSWORD 'strongpassword';
+CREATE ROLE bob LOGIN PASSWORD 'strongpassword';
+CREATE ROLE charlie LOGIN PASSWORD 'strongpassword';
+
+-- Object-level privileges in PostgreSQL:
+-- TABLE: SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
+-- SEQUENCE: USAGE, SELECT, UPDATE
+-- SCHEMA: USAGE, CREATE
+-- DATABASE: CONNECT, CREATE, TEMPORARY
+-- FUNCTION: EXECUTE
+-- DEFAULT PRIVILEGES: grant to all future objects automatically
+
+-- Grant table privileges to group roles:
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO app_read;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO app_write;
+GRANT CONNECT ON DATABASE myapp TO app_read;
+GRANT CONNECT ON DATABASE myapp TO app_write;
+GRANT USAGE ON SCHEMA public TO app_read, app_write;
+
+-- Grant group roles to users:
+GRANT app_read TO bob;                   -- bob can only read
+GRANT app_read, app_write TO alice;      -- alice can read and write
+GRANT app_read, app_write, admin_role TO charlie;  -- charlie has all
+
+-- Role inheritance:
+-- By default (INHERIT attribute), alice inherits all privileges of app_read and app_write
+-- To require explicit SET ROLE (for sensitive operations):
+CREATE ROLE dba_ops NOLOGIN NOINHERIT;  -- privileges NOT inherited automatically
+GRANT pg_monitor, pg_signal_backend TO dba_ops;  -- powerful PostgreSQL system roles
+GRANT dba_ops TO charlie;
+-- charlie cannot use pg_monitor just by connecting; must:
+-- SET ROLE dba_ops;   -- explicitly elevate
+
+-- Revoke:
+REVOKE app_write FROM bob;       -- bob is now read-only again
+REVOKE ALL PRIVILEGES ON orders FROM bob;  -- revoke specific table
+
+-- Check effective privileges:
+SELECT grantee, privilege_type, table_name
+FROM information_schema.role_table_grants
+WHERE table_name = 'orders';
+
+-- Default privileges for future tables:
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+    GRANT SELECT ON TABLES TO app_read;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_write;</div>
+
+      <h2>Row-Level Security (RLS)</h2>
+      <div class="code-block">-- RLS restricts which ROWS a user can see or modify, based on policies
+-- Useful for multi-tenant applications where users should only see their own data
+
+-- Enable RLS on a table:
+ALTER TABLE orders ENABLE ROW LEVEL SECURITY;
+
+-- Without any policy: NO ROW is accessible (default-deny)
+-- Table owner bypasses RLS by default (FORCE ROW LEVEL SECURITY to change):
+ALTER TABLE orders FORCE ROW LEVEL SECURITY;
+
+-- Create a SELECT policy:
+CREATE POLICY orders_isolation ON orders
+    FOR SELECT
+    USING (customer_id = current_setting('app.current_user_id')::BIGINT);
+-- USING clause: row is visible if condition is TRUE
+-- current_setting('app.current_user_id') is set by the application at connection time
+
+-- Create an INSERT policy:
+CREATE POLICY orders_insert ON orders
+    FOR INSERT
+    WITH CHECK (customer_id = current_setting('app.current_user_id')::BIGINT);
+-- WITH CHECK clause: INSERT/UPDATE is allowed only if condition is TRUE
+
+-- Create UPDATE policy (can see + can modify):
+CREATE POLICY orders_update ON orders
+    FOR UPDATE
+    USING (customer_id = current_setting('app.current_user_id')::BIGINT)
+    WITH CHECK (customer_id = current_setting('app.current_user_id')::BIGINT);
+
+-- Application sets user context on each connection (or transaction):
+SET app.current_user_id = '12345';  -- or via application code before each query
+-- In Python with psycopg2:
+-- cur.execute("SET app.current_user_id = %s", [user_id])
+-- then run all queries for this user
+
+-- Multiple policies: PostgreSQL ORs all PERMISSIVE policies for the same command
+-- All RESTRICTIVE policies must pass (AND logic)
+
+-- Admin bypass: role with BYPASSRLS or table owner bypasses all policies
+CREATE ROLE admin_service LOGIN BYPASSRLS;  -- admin can see all rows
+GRANT CONNECT ON DATABASE myapp TO admin_service;
+-- Normal app user role does NOT have BYPASSRLS → policies apply</div>
+
+      <h2>Multi-Tenant SaaS Example</h2>
+      <div class="code-block">-- SaaS app: each tenant has their own data; tenants must NEVER see each other's data
+
+CREATE TABLE projects (
+    id            BIGSERIAL PRIMARY KEY,
+    tenant_id     BIGINT NOT NULL REFERENCES tenants(id),
+    name          TEXT NOT NULL,
+    created_at    TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE tasks (
+    id            BIGSERIAL PRIMARY KEY,
+    tenant_id     BIGINT NOT NULL REFERENCES tenants(id),
+    project_id    BIGINT NOT NULL REFERENCES projects(id),
+    title         TEXT NOT NULL,
+    assignee_id   BIGINT,
+    status        TEXT DEFAULT 'open'
+);
+
+-- Enable and enforce RLS on both tables:
+ALTER TABLE projects ENABLE ROW LEVEL SECURITY;
+ALTER TABLE projects FORCE ROW LEVEL SECURITY;
+ALTER TABLE tasks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tasks FORCE ROW LEVEL SECURITY;
+
+-- All queries scoped to current tenant:
+CREATE POLICY tenant_isolation_projects ON projects
+    USING (tenant_id = current_setting('app.tenant_id')::BIGINT);
+
+CREATE POLICY tenant_isolation_tasks ON tasks
+    USING (tenant_id = current_setting('app.tenant_id')::BIGINT);
+
+-- With RLS in place:
+-- Tenant A: SET app.tenant_id = '1';  SELECT * FROM projects; -- sees only tenant 1 projects
+-- Tenant B: SET app.tenant_id = '2';  SELECT * FROM projects; -- sees only tenant 2 projects
+-- Even if they somehow get each other's project IDs, the query returns no rows
+
+-- JOIN safety: RLS applies to all tables being joined:
+-- SELECT p.name, count(t.id) FROM projects p LEFT JOIN tasks t ON t.project_id = p.id
+-- Both projects and tasks rows filtered to current tenant — no cross-tenant data leaks</div>
+
+      <h2>ABAC with PostgreSQL</h2>
+      <div class="code-block">-- ABAC: policies evaluated based on attributes (user role, resource owner, time, etc.)
+-- More complex but enables fine-grained rules that RBAC cannot express:
+-- "users can see documents they own OR documents marked public OR
+--  documents assigned to a team they belong to"
+
+CREATE POLICY document_access ON documents
+    FOR SELECT
+    USING (
+        owner_id = current_setting('app.current_user_id')::BIGINT
+        OR visibility = 'public'
+        OR id IN (
+            SELECT document_id
+            FROM document_team_assignments dta
+            JOIN user_teams ut ON dta.team_id = ut.team_id
+            WHERE ut.user_id = current_setting('app.current_user_id')::BIGINT
+        )
+    );
+
+-- Time-based ABAC: policy active only during business hours (example):
+CREATE POLICY business_hours_only ON audit_logs
+    FOR SELECT
+    USING (
+        EXTRACT(HOUR FROM NOW() AT TIME ZONE 'UTC') BETWEEN 8 AND 18
+        OR current_user = 'emergency_admin'
+    );</div>
+
+      <div class="tip-box">
+        <strong>Security design checklist for PostgreSQL:</strong>
+        <ul>
+          <li>Never use superuser for application connections — create a dedicated app_user role</li>
+          <li>Grant only needed privileges: SELECT-only for read replicas, INSERT/UPDATE/DELETE for write path</li>
+          <li>Use RLS for multi-tenant tables — don't rely solely on WHERE clauses in application code</li>
+          <li>Set idle_in_transaction_session_timeout and statement_timeout on the app_user role</li>
+          <li>Revoke CONNECT from PUBLIC on newly created databases: <code>REVOKE CONNECT ON DATABASE mydb FROM PUBLIC;</code></li>
+          <li>Revoke CREATE on public schema from PUBLIC: <code>REVOKE CREATE ON SCHEMA public FROM PUBLIC;</code> (PostgreSQL 15+ default)</li>
+        </ul>
+      </div>
+
+      <h2>Summary</h2>
+      <ul>
+        <li>DAC: owner grants permissions (PostgreSQL default via GRANT/REVOKE)</li>
+        <li>RBAC: roles bundle privileges; users assigned to roles; PostgreSQL roles with INHERIT for automatic privilege bundling</li>
+        <li>ABAC: attribute-based policies; expressible in RLS with complex USING clauses</li>
+        <li>RLS enables row-level filtering based on session variables — essential for multi-tenant applications</li>
+        <li>BYPASSRLS on admin roles exempts them from RLS for operational tasks</li>
+        <li>Principle of least privilege: app user role should only have what it needs and nothing more</li>
+      </ul>
+    </article>
+  </main>
+
+  <footer class="page-footer">
+    <p>Part of the DBMS Series — <a href="/articles.html">View all articles</a></p>
+  </footer>
+</body>
+</html>

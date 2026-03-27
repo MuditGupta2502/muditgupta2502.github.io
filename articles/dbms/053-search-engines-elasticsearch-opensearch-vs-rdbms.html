@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta http-equiv="X-UA-Compatible" content="IE=edge" />
+<title>Search Engines vs Databases: Elasticsearch/OpenSearch and RDBMS Integration | Mudit Gupta</title>
+<meta name="description" content="When to use PostgreSQL full-text search vs Elasticsearch/OpenSearch, indexing pipelines, relevance scoring, and consistency trade-offs." />
+<link rel="stylesheet" href="/assets/css/articles.css" /><style>.article-content{max-width:800px;margin:0 auto;line-height:1.8}.code-block{background:#f5f5f5;padding:1rem;border-radius:4px;white-space:pre;overflow-x:auto;font-family:monospace}</style>
+</head><body>
+<header class="topbar"><div class="topbar-inner"><a href="/" class="home-link">Mudit Gupta</a><div class="topbar-actions"><a href="/articles.html" class="btn btn-outline">Articles</a></div></div></header>
+<main><article class="article-content">
+<p class="kicker">DBMS Series | Part 053</p><h1>Search Engines vs Databases: Elasticsearch/OpenSearch and RDBMS Integration</h1><p class="meta">Search | 17 min read</p>
+<p>Relational databases are optimized for exact lookup and transactional correctness. Search engines are optimized for relevance ranking, fuzzy matching, and text analytics at scale.</p>
+<h2>When PostgreSQL FTS Is Enough</h2>
+<div class="code-block">ALTER TABLE articles ADD COLUMN search_vec tsvector;
+UPDATE articles SET search_vec = to_tsvector('english', title || ' ' || body);
+CREATE INDEX idx_articles_search ON articles USING GIN(search_vec);
+
+SELECT id, title
+FROM articles
+WHERE search_vec @@ plainto_tsquery('db indexing')
+ORDER BY ts_rank(search_vec, plainto_tsquery('db indexing')) DESC;</div>
+<h2>When to Add Elasticsearch/OpenSearch</h2>
+<ul>
+<li>Need typo tolerance, synonyms, stemming, language analyzers.</li>
+<li>Need relevance tuning and faceted filtering at high scale.</li>
+<li>Need near real-time dashboards over logs and documents.</li>
+</ul>
+<div class="code-block">-- Common architecture:
+-- PostgreSQL = source of truth
+-- CDC/Outbox -> Kafka -> Elasticsearch indexer
+-- Search API reads from Elasticsearch
+-- Mutations still go to PostgreSQL</div>
+<h2>Summary</h2><ul>
+<li>Keep transactional truth in RDBMS; use search index as a read model.</li>
+<li>Plan for eventual consistency between DB and search index.</li>
+<li>Use CDC/outbox for reliable indexing pipelines.</li>
+</ul>
+</article></main>
+<footer class="page-footer"><p>Part of the DBMS Series — <a href="/articles.html">View all articles</a></p></footer>
+</body></html>

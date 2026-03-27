@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta http-equiv="X-UA-Compatible" content="IE=edge" />
+<title>Database Testing, Benchmarking and Capacity Planning | Mudit Gupta</title>
+<meta name="description" content="How to test database correctness and performance with pgbench, workload replay, query plans, and practical capacity planning formulas." />
+<link rel="stylesheet" href="/assets/css/articles.css" />
+<style>.article-content{max-width:800px;margin:0 auto;line-height:1.8}.code-block{background:#f5f5f5;padding:1rem;border-radius:4px;white-space:pre;overflow-x:auto;font-family:monospace}</style>
+</head><body>
+<header class="topbar"><div class="topbar-inner"><a href="/" class="home-link">Mudit Gupta</a><div class="topbar-actions"><a href="/articles.html" class="btn btn-outline">Articles</a></div></div></header>
+<main><article class="article-content">
+<p class="kicker">DBMS Series | Part 049</p><h1>Database Testing, Benchmarking and Capacity Planning</h1><p class="meta">Performance | 18 min read</p>
+<p>Production incidents are often performance surprises that could have been caught with realistic load tests. Database testing has three layers: correctness, performance, and growth forecasting.</p>
+<h2>Correctness Testing</h2>
+<div class="code-block">-- Integrity assertions in CI
+SELECT COUNT(*) FROM orders WHERE total < 0;           -- must be 0
+SELECT COUNT(*) FROM users WHERE email IS NULL;        -- must be 0
+SELECT COUNT(*) FROM order_items oi
+LEFT JOIN orders o ON oi.order_id = o.id
+WHERE o.id IS NULL;                                    -- orphan check must be 0</div>
+<h2>Benchmarking with pgbench</h2>
+<div class="code-block">-- Initialize pgbench schema
+pgbench -i -s 100 mydb
+
+-- Run 10-minute benchmark with 50 clients and 10 threads
+pgbench -c 50 -j 10 -T 600 mydb
+
+-- Custom workload script
+pgbench -c 100 -j 20 -T 900 -f workload.sql mydb
+
+-- Key metrics:
+-- TPS, p95 latency, lock wait time, WAL generation rate, replication lag</div>
+<h2>Capacity Planning</h2>
+<div class="code-block">-- Simple throughput forecast:
+-- required_qps_next_quarter = current_qps * growth_factor
+-- Example: 8k qps * 1.7 = 13.6k qps
+
+-- Storage forecast:
+-- monthly_growth_gb = avg_daily_ingest_gb * 30
+-- 40 GB/day -> 1200 GB/month
+-- 12-month projected raw = 14.4 TB (+ indexes, replicas, backups)
+
+-- Memory rule of thumb:
+-- shared_buffers ~ 25% RAM
+-- effective_cache_size ~ 75% RAM
+-- monitor cache hit ratio target > 95%</div>
+<h2>Summary</h2><ul>
+<li>Test correctness with SQL assertions and migration checks.</li>
+<li>Benchmark using realistic concurrency and SQL mix, not synthetic single-query loops.</li>
+<li>Capacity plans should include data growth, index growth, backups, and replica overhead.</li>
+</ul></article></main>
+<footer class="page-footer"><p>Part of the DBMS Series — <a href="/articles.html">View all articles</a></p></footer>
+</body></html>

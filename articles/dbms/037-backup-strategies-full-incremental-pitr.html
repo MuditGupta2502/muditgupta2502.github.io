@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>Backup Strategies: Full, Incremental, Differential and PITR | Mudit Gupta</title>
+  <meta name="description" content="Database backup types (full, incremental, differential), logical vs physical backups, WAL archiving for PITR, RTO/RPO, and cloud backup tools." />
+  <link rel="stylesheet" href="/assets/css/articles.css" />
+  <style>
+    .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
+    .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; color: #1a1a1a; }
+    .article-content h3 { margin-top: 1.5rem; margin-bottom: 0.75rem; color: #1a1a1a; }
+    .article-content p { margin-bottom: 1rem; color: #333; }
+    .article-content ul, .article-content ol { margin-left: 2rem; margin-bottom: 1rem; }
+    .article-content li { margin-bottom: 0.5rem; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; white-space: pre; margin-bottom: 1rem; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    table th, table td { border: 1px solid #ddd; padding: 0.75rem; text-align: left; }
+    table th { background: #f0f0f0; font-weight: 600; }
+    .note-box { background: #fff8e1; border-left: 4px solid #f9a825; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .tip-box { background: #e8f5e9; border-left: 4px solid #43a047; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .danger-box { background: #ffebee; border-left: 4px solid #e53935; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a href="/" class="home-link">Mudit Gupta</a>
+      <div class="topbar-actions">
+        <a href="/articles.html" class="btn btn-outline">Articles</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <article class="article-content">
+      <p class="kicker">DBMS Series | Part 037</p>
+      <h1>Backup Strategies: Full, Incremental, Differential and PITR</h1>
+      <p class="meta">Operations | 20 min read</p>
+
+      <p>
+        Backups are your last line of defense against data loss from hardware failure,
+        accidental deletion, ransomware, or corrupted application code. A backup strategy
+        that hasn't been tested is not a backup strategy — it's wishful thinking.
+      </p>
+
+      <h2>RTO vs RPO</h2>
+      <p>Before choosing a backup strategy, define your requirements:</p>
+      <table>
+        <tr><th>Metric</th><th>Definition</th><th>Example</th></tr>
+        <tr><td><strong>RPO</strong> (Recovery Point Objective)</td><td>Maximum acceptable data loss (time span)</td><td>"We can lose at most 1 hour of data"</td></tr>
+        <tr><td><strong>RTO</strong> (Recovery Time Objective)</td><td>Maximum acceptable downtime</td><td>"System must be back in 4 hours"</td></tr>
+      </table>
+      <p>
+        A 24-hour backup without WAL archiving gives RPO=24h. PITR with continuous WAL
+        archiving can give RPO of seconds. RTO depends on backup size and replay time.
+      </p>
+
+      <h2>Logical vs Physical Backups</h2>
+      <table>
+        <tr><th>Attribute</th><th>Logical (pg_dump / mysqldump)</th><th>Physical (pg_basebackup / filesystem snapshot)</th></tr>
+        <tr><td>Output format</td><td>SQL statements or custom dump format</td><td>Binary copy of data files</td></tr>
+        <tr><td>Portability</td><td>Cross-version, cross-platform</td><td>Same major version and architecture</td></tr>
+        <tr><td>Speed</td><td>Slow for large databases</td><td>Fast (close to raw I/O speed)</td></tr>
+        <tr><td>Granularity</td><td>Database, schema, or table level</td><td>Entire cluster</td></tr>
+        <tr><td>PITR support</td><td>No</td><td>Yes (with WAL archiving)</td></tr>
+        <tr><td>Consistency</td><td>Snapshot consistent (transaction-consistent)</td><td>Requires careful handling during backup</td></tr>
+      </table>
+
+      <h2>Backup Types: Full, Incremental, Differential</h2>
+      <div class="code-block">-- Full backup: complete copy of all data
+-- Pro: simplest restore (single backup file)
+-- Con: expensive storage and time for large databases
+-- Typical schedule: weekly
+
+-- Incremental backup: only changes since the LAST backup (full or incremental)
+-- Pro: minimal storage per backup
+-- Con: restore requires: full + all incrementals in sequence → complex
+-- Typical schedule: daily (after weekly full)
+
+-- Differential backup: changes since the LAST FULL backup
+-- Pro: restore requires only: full + latest differential
+-- Con: grows over time (Saturday's diff includes Mon-Fri changes)
+-- Typical schedule: daily
+
+-- Example weekly schedule:
+--   Sunday:    Full backup    (10GB)
+--   Monday:    Incremental    (500MB changed Mon)
+--   Tuesday:   Incremental    (300MB changed Tue)
+--   Wednesday: Differential   (800MB changed Mon+Tue+Wed)
+--
+-- To restore to Tuesday state:
+--   Incremental strategy: Full + Mon incremental + Tue incremental
+--   Differential strategy: Full + Tuesday differential (simpler but larger)
+
+-- WAL-based continuous backup (PostgreSQL PITR):
+-- Combines a base backup (physical) + streaming WAL
+-- Can restore to ANY point in time, not just backup boundaries
+-- This is the gold standard for most production PostgreSQL deployments</div>
+
+      <h2>Logical Backup with pg_dump</h2>
+      <div class="code-block">-- Single database backup (SQL format):
+pg_dump -U postgres -d mydb -F p -f /backup/mydb_$(date +%Y%m%d).sql
+-- -F p = plain SQL (default); -F c = custom (compressed, parallel restore)
+
+-- Custom format (faster restore with parallel workers):
+pg_dump -U postgres -d mydb -F c -f /backup/mydb.dump -j 4
+
+-- Backup specific tables:
+pg_dump -U postgres -d mydb -t orders -t order_items -F c -f /backup/orders.dump
+
+-- Restoring a SQL dump:
+psql -U postgres -d mydb_restore < /backup/mydb.sql
+
+-- Restoring a custom format dump:
+pg_restore -U postgres -d mydb_restore -F c -j 4 /backup/mydb.dump
+-- -j 4 = parallel restore with 4 workers (much faster for large databases)
+
+-- Full cluster backup (includes roles, tablespaces):
+pg_dumpall -U postgres -f /backup/cluster_full.sql
+
+-- Continuous consistency tip:
+-- pg_dump uses a single transaction (REPEATABLE READ) for consistency
+-- No table locks; safe for production use
+-- But very large tables may cause slow backups and bloat vacuum</div>
+
+      <h2>Physical Backup with pg_basebackup</h2>
+      <div class="code-block">-- Creates a copy of the data directory; suitable as base for PITR
+pg_basebackup \
+  -h localhost \
+  -U replication_user \   -- must have REPLICATION privilege
+  -D /backup/base/ \      -- destination directory
+  -Ft \                   -- tar format
+  -z \                    -- gzip compression
+  -P \                    -- progress reporting
+  --wal-method=stream     -- stream WAL during backup (ensures consistency)
+
+-- Options explained:
+-- --wal-method=fetch: copy WAL files after backup completes (may miss some)
+-- --wal-method=stream: runs a second replication slot during backup (safer)
+-- --checkpoint=fast: force immediate checkpoint (faster start, more I/O spike)
+-- --checkpoint=spread: spread checkpoint I/O (gentler on production, slower)
+
+-- Output:
+-- base.tar.gz     — data directory
+-- pg_wal.tar.gz   — WAL files needed to make backup consistent
+
+-- To verify backup:
+-- Start a PostgreSQL instance against it in recovery mode; confirm it can start</div>
+
+      <h2>WAL Archiving for PITR</h2>
+      <div class="code-block">-- Step 1: Enable WAL archiving (postgresql.conf):
+wal_level = replica           -- or logical
+archive_mode = on
+archive_command = 'test ! -f /wal/archive/%f && cp %p /wal/archive/%f'
+-- The test prevents overwriting (WAL filenames can be reused after timeline change)
+-- For cloud storage: use wal-g, pgBackRest, or Barman
+
+-- Step 2: First base backup:
+pg_basebackup -D /backup/base -Ft -z -P --wal-method=stream
+
+-- Step 3: WAL files are archived continuously (every ~16MB segment or 5 minutes)
+
+-- Step 4: Recovery after disaster
+-- a) Restore base backup:
+tar -xzf /backup/base/base.tar.gz -C /var/lib/postgresql/data/
+
+-- b) Create recovery settings (postgresql.conf or recovery.conf):
+restore_command = 'cp /wal/archive/%f %p'
+recovery_target_time = '2024-11-04 09:00:00'   -- restore to just before disaster
+recovery_target_action = 'promote'
+
+-- c) Start PostgreSQL — it replays WAL until 09:00:00, then promotes
+-- d) Verify data, then reconnect applications
+
+-- wal-g for cloud storage backup (popular open-source tool):
+-- WALG_S3_PREFIX=s3://my-bucket/postgres-backups wal-g backup-push $PGDATA
+-- WALG_S3_PREFIX=s3://my-bucket/postgres-backups wal-g backup-fetch $PGDATA LATEST
+-- Handles compression, encryption, and incremental file-level backups</div>
+
+      <h2>Snapshot-Based Backups</h2>
+      <div class="code-block">-- Cloud provider storage snapshots:
+-- AWS EBS snapshot, Azure Managed Disk snapshot, GCP Persistent Disk snapshot
+-- These are block-level incremental snapshots by default (only changed blocks copied)
+-- Snapshot consistency: EBS snapshots are "crash-consistent" but NOT application-consistent
+-- To get application consistency:
+-- 1. CHECKPOINT in PostgreSQL (flush dirty pages to disk)
+-- 2. Immediately take the EBS snapshot
+-- 3. Resume normal operation
+
+-- PostgreSQL-level snapshot consistency for EBS:
+-- a) Run: SELECT pg_backup_start('EBS snapshot');
+-- b) Take EBS snapshot
+-- c) Run: SELECT pg_backup_stop();
+-- d) The WAL files listed in pg_backup_stop output must be archived
+
+-- AWS RDS automated backups:
+-- Daily snapshot during backup window
+-- Transaction logs retained for 0-35 days
+-- Enables PITR to any second within that retention period
+-- Managed fully by AWS — no manual WAL archiving needed
+
+-- ZFS/LVM snapshots for bare metal:
+-- lvcreate --snapshot --name db_snap -L 10G /dev/vg/postgres_data
+-- Mount snapshot read-only for backup, then remove
+-- Near-instant snapshot creation; incremental storage cost</div>
+
+      <h2>Backup Testing Matrix</h2>
+      <table>
+        <tr><th>Test</th><th>Frequency</th><th>What to Verify</th></tr>
+        <tr><td>Restore drill</td><td>Monthly</td><td>Full restore completes; data is readable and consistent</td></tr>
+        <tr><td>PITR drill</td><td>Quarterly</td><td>Can restore to specific time; row-level verification</td></tr>
+        <tr><td>Backup integrity</td><td>Weekly</td><td>pg_restore --list on dump; checksum verify on physical</td></tr>
+        <tr><td>Off-site restore</td><td>Annually</td><td>Restore in different region/cloud from archived backups</td></tr>
+      </table>
+
+      <div class="danger-box">
+        <strong>Critical mistakes to avoid:</strong>
+        <ul>
+          <li>Backing up to the same disk as the database — one failure destroys both</li>
+          <li>Never testing restores — discovered at disaster time that backup is corrupt</li>
+          <li>WAL archiving silently failing — check pg_stat_archiver.last_failed_wal</li>
+          <li>Forgetting archive_cleanup_command — WAL directory fills up, archiving stops</li>
+          <li>Not backing up pg_hba.conf and postgresql.conf — recovery without config is painful</li>
+        </ul>
+      </div>
+
+      <h2>Summary</h2>
+      <ul>
+        <li>Define RPO and RTO first — they drive every decision in your backup strategy</li>
+        <li>Logical backups (pg_dump): portable, granular, but slow and no PITR support</li>
+        <li>Physical backups (pg_basebackup): fast, support PITR, but tied to same major version</li>
+        <li>PITR = physical base backup + continuous WAL archiving → RPO down to seconds</li>
+        <li>Incremental strategy needs full + all incrementals for restore; differential needs full + latest diff</li>
+        <li>Always test restores — an untested backup is not a backup</li>
+      </ul>
+    </article>
+  </main>
+
+  <footer class="page-footer">
+    <p>Part of the DBMS Series — <a href="/articles.html">View all articles</a></p>
+  </footer>
+</body>
+</html>

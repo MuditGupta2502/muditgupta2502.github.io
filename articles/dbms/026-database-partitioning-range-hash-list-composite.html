@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>Database Partitioning: Range, Hash, List and Composite Strategies | Mudit Gupta</title>
+  <meta name="description" content="Comprehensive guide to database partitioning — range, hash, list, and composite strategies, partition pruning, local vs global indexes, and practical PostgreSQL examples." />
+  <link rel="stylesheet" href="/assets/css/articles.css" />
+  <style>
+    .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
+    .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; color: #1a1a1a; }
+    .article-content h3 { margin-top: 1.5rem; margin-bottom: 0.75rem; color: #1a1a1a; }
+    .article-content p { margin-bottom: 1rem; color: #333; }
+    .article-content ul, .article-content ol { margin-left: 2rem; margin-bottom: 1rem; }
+    .article-content li { margin-bottom: 0.5rem; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; white-space: pre; margin-bottom: 1rem; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    table th, table td { border: 1px solid #ddd; padding: 0.75rem; text-align: left; }
+    table th { background: #f0f0f0; font-weight: 600; }
+    .note-box { background: #fff8e1; border-left: 4px solid #f9a825; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .tip-box { background: #e8f5e9; border-left: 4px solid #43a047; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .danger-box { background: #ffebee; border-left: 4px solid #e53935; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a href="/" class="home-link">Mudit Gupta</a>
+      <div class="topbar-actions">
+        <a href="/articles.html" class="btn btn-outline">Articles</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <article class="article-content">
+      <p class="kicker">DBMS Series | Part 026</p>
+      <h1>Database Partitioning: Range, Hash, List and Composite Strategies</h1>
+      <p class="meta">Scaling &amp; Architecture | 25 min read</p>
+
+      <p>
+        Partitioning splits a large table into smaller physical pieces — each called a partition —
+        while the database presents them as a single logical table. This improves query performance
+        (partition pruning skips irrelevant data), maintenance operations (archiving old partitions),
+        and in some systems, parallel execution across partitions.
+      </p>
+
+      <h2>Why Partition?</h2>
+      <ul>
+        <li><strong>Performance:</strong> Queries with a filter on the partition key skip entire partitions — scanning 1/24 of data instead of all of it</li>
+        <li><strong>Maintenance:</strong> Drop a partition (instant) instead of DELETE on 100M rows (hours, LOT of WAL)</li>
+        <li><strong>Storage tiering:</strong> Move cold partitions to slower/cheaper storage (tablespace)</li>
+        <li><strong>Bulk load:</strong> Load data into a new partition offline, then attach it atomically</li>
+        <li><strong>Parallel query:</strong> Multiple workers can scan different partitions simultaneously</li>
+      </ul>
+
+      <h2>Range Partitioning</h2>
+      <p>
+        Rows are distributed based on whether the partition key value falls within a specified
+        value range. Most natural for time-series data.
+      </p>
+      <div class="code-block">-- PostgreSQL declarative partitioning (PG10+)
+CREATE TABLE orders (
+    order_id    BIGSERIAL,
+    order_date  DATE NOT NULL,
+    customer_id BIGINT,
+    total       NUMERIC(10, 2),
+    status      TEXT
+) PARTITION BY RANGE (order_date);
+
+-- Create partitions per quarter:
+CREATE TABLE orders_2024_q1 PARTITION OF orders
+    FOR VALUES FROM ('2024-01-01') TO ('2024-04-01');
+
+CREATE TABLE orders_2024_q2 PARTITION OF orders
+    FOR VALUES FROM ('2024-04-01') TO ('2024-07-01');
+
+CREATE TABLE orders_2024_q3 PARTITION OF orders
+    FOR VALUES FROM ('2024-07-01') TO ('2024-10-01');
+
+CREATE TABLE orders_2024_q4 PARTITION OF orders
+    FOR VALUES FROM ('2024-10-01') TO ('2025-01-01');
+
+-- Default partition (catches rows not matching any partition):
+CREATE TABLE orders_other PARTITION OF orders DEFAULT;
+
+-- Queries that use partition key get automatic pruning:
+SELECT SUM(total) FROM orders WHERE order_date >= '2024-04-01' AND order_date < '2024-07-01';
+-- Only scans orders_2024_q2 — all other partitions skipped
+
+-- Drop old partition instantly (instead of DELETE + VACUUM):
+DROP TABLE orders_2023_q1;  -- microseconds, no WAL bloat
+
+-- Detach before drop (keeps the table, just removes it from the parent):
+ALTER TABLE orders DETACH PARTITION orders_2023_q1;</div>
+
+      <div class="note-box">
+        <strong>Range partitioning pitfall — hot partition:</strong> With time-based partitioning,
+        all writes always go to the "current" partition (latest time range). This creates an
+        I/O hotspot. Mitigate by using sub-partitioning (partition by date + hash on customer_id)
+        or accepting it — recent data is the hottest anyway, so it benefits from being all in
+        memory in the buffer cache.
+      </div>
+
+      <h2>Hash Partitioning</h2>
+      <p>
+        Rows are distributed based on a hash function applied to the partition key. Each partition
+        receives a mathematically even share of rows regardless of value distribution.
+      </p>
+      <div class="code-block">-- Hash partition by customer_id into 8 buckets:
+CREATE TABLE customers (
+    customer_id BIGINT,
+    name        TEXT,
+    email       TEXT,
+    city        TEXT
+) PARTITION BY HASH (customer_id);
+
+CREATE TABLE customers_p0 PARTITION OF customers
+    FOR VALUES WITH (MODULUS 8, REMAINDER 0);
+CREATE TABLE customers_p1 PARTITION OF customers
+    FOR VALUES WITH (MODULUS 8, REMAINDER 1);
+-- ... p2 through p7
+
+-- All 8 partitions receive roughly equal rows automatically
+-- Good for: distributing workload evenly when no natural range exists
+
+-- Hash partitioning does NOT enable partition pruning for queries without the key:
+SELECT * FROM customers WHERE city = 'Mumbai';  -- scans ALL 8 partitions
+SELECT * FROM customers WHERE customer_id = 12345;  -- prunes to ONE partition</div>
+
+      <h2>List Partitioning</h2>
+      <p>
+        Rows are assigned to partitions based on discrete values of the partition key.
+        Useful for geographic regions, status codes, or business units.
+      </p>
+      <div class="code-block">CREATE TABLE transactions (
+    trans_id   BIGSERIAL,
+    region     TEXT NOT NULL,
+    amount     NUMERIC,
+    trans_date DATE
+) PARTITION BY LIST (region);
+
+CREATE TABLE transactions_india PARTITION OF transactions
+    FOR VALUES IN ('north_india', 'south_india', 'east_india', 'west_india');
+
+CREATE TABLE transactions_usa PARTITION OF transactions
+    FOR VALUES IN ('us_east', 'us_west', 'us_central');
+
+CREATE TABLE transactions_europe PARTITION OF transactions
+    FOR VALUES IN ('uk', 'germany', 'france', 'netherlands');
+
+CREATE TABLE transactions_other PARTITION OF transactions DEFAULT;
+
+-- GDPR example: isolate EU data in a specific tablespace:
+CREATE TABLESPACE eu_tablespace LOCATION '/mnt/eu_storage';
+ALTER TABLE transactions_europe SET TABLESPACE eu_tablespace;
+
+-- Partition pruning for list:
+SELECT * FROM transactions WHERE region = 'uk' AND trans_date > '2024-01-01';
+-- Only transactions_europe is scanned</div>
+
+      <h2>Composite (Sub-)Partitioning</h2>
+      <p>
+        Partitions can themselves be partitioned — called sub-partitioning. The first level uses
+        one strategy and the second uses another.
+      </p>
+      <div class="code-block">-- Partition orders by year (range), then by customer hash (hash):
+-- This distributes both temporally AND evenly within each time period
+
+CREATE TABLE orders_2024 PARTITION OF orders
+    FOR VALUES FROM ('2024-01-01') TO ('2025-01-01')
+    PARTITION BY HASH (customer_id);
+
+CREATE TABLE orders_2024_p0 PARTITION OF orders_2024
+    FOR VALUES WITH (MODULUS 4, REMAINDER 0);
+CREATE TABLE orders_2024_p1 PARTITION OF orders_2024
+    FOR VALUES WITH (MODULUS 4, REMAINDER 1);
+CREATE TABLE orders_2024_p2 PARTITION OF orders_2024
+    FOR VALUES WITH (MODULUS 4, REMAINDER 2);
+CREATE TABLE orders_2024_p3 PARTITION OF orders_2024
+    FOR VALUES WITH (MODULUS 4, REMAINDER 3);
+-- Total: 4 physical partitions per year
+
+-- Query pruning cascades: year filter eliminates 2022, 2023, etc.;
+-- customer_id filter further eliminates ~3 of 4 sub-partitions within 2024</div>
+
+      <h2>Indexes on Partitioned Tables</h2>
+      <table>
+        <tr><th>Type</th><th>Description</th><th>Trade-offs</th></tr>
+        <tr><td>Local (Default)</td><td>One index per partition, only indexes that partition's rows</td><td>Fast maintenance, supports DROP PARTITION; can't enforce unique across all partitions</td></tr>
+        <tr><td>Global</td><td>Single index across all partitions (not yet natively in PostgreSQL)</td><td>Enables global uniqueness; expensive to maintain; must be rebuilt on partition ops</td></tr>
+        <tr><td>Partitioned index</td><td>PostgreSQL: CREATE INDEX on parent → automatically creates local indexes on all children</td><td>Convenient but still local semantics; no global uniqueness enforcement</td></tr>
+      </table>
+      <div class="code-block">-- Create index on the parent table — PostgreSQL creates one per partition automatically:
+CREATE INDEX idx_orders_customer ON orders (customer_id);
+-- → Creates: idx_orders_2024_q1_customer, idx_orders_2024_q2_customer, etc.
+
+-- Caveat: UNIQUE constraint on a partitioned table must include the partition key:
+ALTER TABLE orders ADD UNIQUE (order_id, order_date);
+-- CANNOT enforce uniqueness across partitions without partition key in constraint
+-- Workaround: use a separate global lookup table or UUID-based keys</div>
+
+      <h2>Partition Maintenance Patterns</h2>
+      <div class="code-block">-- Archive old partition (move to cold storage tablespace):
+ALTER TABLE orders_2022_q1 SET TABLESPACE cold_storage;
+
+-- Detach partition for offline bulk modification:
+ALTER TABLE orders DETACH PARTITION orders_2022_q1 CONCURRENTLY;  -- PG14+
+-- CONCURRENTLY allows reads/writes to continue during detach
+
+-- Reload massaged/updated data, re-attach:
+-- (modify the standalone table)
+ALTER TABLE orders ATTACH PARTITION orders_2022_q1
+    FOR VALUES FROM ('2022-01-01') TO ('2022-04-01');
+
+-- Automate partition creation (cron-based script pattern):
+-- Every month: create next month's partition in advance
+-- Prevents insert failures when data is inserted into the future range</div>
+
+      <div class="tip-box">
+        <strong>Real-world pattern — IoT telemetry table:</strong> A sensor data table with 1 billion
+        rows per year partitioned by week gives 52 partitions. Time-range queries touch 1-4
+        partitions. Weekly partitions can be bulk-loaded via ATTACH. Old partitions (>1 year)
+        can be detached, compressed, and stored in object storage — all with zero downtime.
+      </div>
+
+      <h2>Summary</h2>
+      <ul>
+        <li>Range partitioning: ideal for time-series data; enables drop-by-time-range maintenance</li>
+        <li>Hash partitioning: even distribution when no natural range exists; good for even parallel work</li>
+        <li>List partitioning: discrete category values; great for geographic or status-based isolation</li>
+        <li>Composite partitioning combines strategies at two levels — common pattern: range by time + hash by ID</li>
+        <li>Indexes on partitioned tables are local by default; global uniqueness requires partition key in constraints</li>
+        <li>DETACH PARTITION (CONCURRENTLY) enables zero-downtime archival; ATTACH brings data back atomically</li>
+      </ul>
+    </article>
+  </main>
+
+  <footer class="page-footer">
+    <p>Part of the DBMS Series — <a href="/articles.html">View all articles</a></p>
+  </footer>
+</body>
+</html>

@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>Replication, Fault Tolerance and Distributed Database Architecture | Mudit Gupta</title>
+  <meta name="description" content="Database replication types — synchronous vs asynchronous, primary-replica, multi-primary, quorum writes. Failover, split-brain prevention, and distributed consistency architecture." />
+  <link rel="stylesheet" href="/assets/css/articles.css" />
+  <style>
+    .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
+    .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; color: #1a1a1a; }
+    .article-content h3 { margin-top: 1.5rem; margin-bottom: 0.75rem; color: #1a1a1a; }
+    .article-content p { margin-bottom: 1rem; color: #333; }
+    .article-content ul, .article-content ol { margin-left: 2rem; margin-bottom: 1rem; }
+    .article-content li { margin-bottom: 0.5rem; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; white-space: pre; margin-bottom: 1rem; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    table th, table td { border: 1px solid #ddd; padding: 0.75rem; text-align: left; }
+    table th { background: #f0f0f0; font-weight: 600; }
+    .note-box { background: #fff8e1; border-left: 4px solid #f9a825; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .tip-box { background: #e8f5e9; border-left: 4px solid #43a047; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .danger-box { background: #ffebee; border-left: 4px solid #e53935; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a href="/" class="home-link">Mudit Gupta</a>
+      <div class="topbar-actions">
+        <a href="/articles.html" class="btn btn-outline">Articles</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <article class="article-content">
+      <p class="kicker">DBMS Series | Part 028</p>
+      <h1>Replication, Fault Tolerance and Distributed Database Architecture</h1>
+      <p class="meta">Distributed Systems | 28 min read</p>
+
+      <p>
+        Replication maintains multiple copies of data on separate servers. It serves two purposes:
+        fault tolerance (a copy survives if a server crashes) and read scaling (replicas handle
+        reads so the primary handles only writes). The trade-off you accept depends on whether
+        replication is synchronous or asynchronous.
+      </p>
+
+      <h2>Primary-Replica (Single Leader) Replication</h2>
+      <p>
+        One node (primary/leader) accepts all writes. Other nodes (replicas/standbys) apply
+        those writes asynchronously or synchronously and serve reads.
+      </p>
+      <div class="code-block">-- PostgreSQL streaming replication setup:
+-- Primary: postgresql.conf
+wal_level = replica          -- log enough for replicas
+max_wal_senders = 5          -- how many replicas can connect
+wal_keep_size = 256MB        -- amount of WAL kept on primary for slow replicas
+
+-- Replica: recovery.conf (PG11-) / postgresql.conf (PG12+)
+primary_conninfo = 'host=db-primary port=5432 user=replication_user'
+hot_standby = on             -- replica can serve read queries while replicating
+
+-- Replica lag monitoring:
+SELECT client_addr, state, sent_lsn, write_lsn, flush_lsn, replay_lsn,
+       (sent_lsn - replay_lsn) AS replication_lag_bytes
+FROM pg_stat_replication;
+
+-- replica: how far behind is my replica?
+SELECT now() - pg_last_xact_replay_timestamp() AS replication_delay;</div>
+
+      <h2>Synchronous vs Asynchronous Replication</h2>
+      <table>
+        <tr><th></th><th>Asynchronous</th><th>Synchronous</th></tr>
+        <tr><td>Durability</td><td>Possible data loss on primary failure (replica may be seconds behind)</td><td>Zero data loss — replica confirms before primary acknowledges</td></tr>
+        <tr><td>Write latency</td><td>Primary-only write speed (fast)</td><td>Network RTT added to every commit (slower)</td></tr>
+        <tr><td>Replica availability</td><td>Writes proceed even if replica is down</td><td>Writes BLOCK if the synchronous replica is down</td></tr>
+        <tr><td>Use case</td><td>Most web apps, analytics replicas, read scaling</td><td>Financial systems, any data you cannot afford to lose</td></tr>
+      </table>
+      <div class="code-block">-- PostgreSQL: configure specific replicas as synchronous
+synchronous_standby_names = 'FIRST 1 (replica1, replica2)'
+-- "At least ONE of replica1/replica2 must confirm before commit"
+
+-- Or require ALL listed replicas to confirm:
+synchronous_standby_names = 'ALL (replica1, replica2)'
+-- Every write waits for both replicas — maximum durability, maximum latency
+
+-- Semi-synchronous (MySQL):
+-- Primary waits for at least one replica to RECEIVE the binlog event (not apply it)
+-- Faster than full sync; provides durability guarantee against primary loss
+-- MySQL: plugin: rpl_semi_sync_master_enabled = ON</div>
+
+      <h2>Failover and Promotion</h2>
+      <div class="code-block">-- Manual failover (PostgreSQL):
+-- 1. Stop the primary (or primary crashes)
+-- 2. Promote the most up-to-date replica:
+pg_ctl promote -D /var/lib/postgresql/data
+-- OR create a trigger file if standby_mode is configured
+touch /tmp/failover.trigger
+
+-- 3. Update connection string in application (or use HAProxy/Patroni)
+
+-- Automated failover tools:
+-- Patroni (etcd/Consul/ZooKeeper based): automatic leader election
+-- Repmgr: lighter-weight, event-driven
+-- AWS RDS Multi-AZ: fully managed automatic failover (60s typically)
+
+-- Patroni cluster setup concept:
+-- 3 nodes + etcd (distributed consensus)
+-- Only node elected as leader accepts writes
+-- Any standby can become leader; configuration changes automatically distributed
+-- HAProxy routes connections: writes → leader, reads → any replica</div>
+
+      <h2>Multi-Primary (Multi-Leader) Replication</h2>
+      <p>
+        Multiple nodes accept writes simultaneously. Write conflicts can occur when two
+        primaries receive conflicting updates to the same row.
+      </p>
+      <div class="code-block">-- Multi-primary use cases:
+-- 1. Multi-datacenter writes: each datacenter has a local primary for low-latency writes
+--    Writes replicate asynchronously across datacenters
+--    Conflict resolution handles rare cross-DC conflicts
+
+-- 2. Offline-first applications (mobile apps):
+--    Phone app writes locally while offline
+--    Syncs to server when connectivity restored
+--    Server must resolve conflicts with server data
+
+-- Conflict types:
+-- Write-write conflict: two primaries update same row simultaneously
+-- Insert-insert: two primaries insert row with same PK
+-- Reorder conflict: transactions A then B on primary1, but B then A on primary2
+
+-- Conflict resolution strategies:
+-- Last-write-wins (LWW): highest timestamp wins (can silently lose writes)
+-- Custom application logic: registered conflict resolver function
+-- CRDT types: automatically merge without conflicts (see BASE article)</div>
+
+      <h2>Leaderless Replication</h2>
+      <p>
+        Cassandra and DynamoDB-style: any node can accept writes.
+        Quorum writes/reads provide tunable consistency.
+      </p>
+      <div class="code-block">-- N=3 replicas. Write goes to all 3 directly (no leader routing).
+-- If W=2: write succeeds when 2 of 3 confirm
+-- If R=2: read queries 2 of 3 nodes; coordinator returns latest (by version or timestamp)
+
+-- Read repair: if 2 replicas return version 5 and 1 returns version 3,
+-- coordinator writes version 5 to the stale replica in the background
+
+-- Hinted handoff:
+-- If destination node is down, another node stores the data "on its behalf"
+-- When the down node recovers, hinted handoff delivers the buffered writes
+-- Limited hint buffer size → stale replicas possible if node is down for long
+
+-- Anti-entropy / Merkle trees:
+-- Background process compares Merkle trees of data ranges between replicas
+-- Where trees differ, repair by syncing the different segments
+-- Ensures eventual convergence even without active reads triggering read repair</div>
+
+      <h2>Split-Brain: The Most Dangerous Failure Mode</h2>
+      <div class="code-block">-- Split-brain: network partition causes two nodes to BOTH believe they are the leader
+-- Both accept writes → data divergence that is very hard to reconcile
+
+-- Example:
+-- Primary in DC-East loses network to DC-West
+-- DC-West's failover system promotes a replica to primary
+-- Now BOTH DC-East and DC-West believe they are primary
+-- Both accept writes for the same table
+-- When network recovers: conflicting writes on both sides
+
+-- Prevention (split-brain fencing / STONITH — "Shoot The Other Node In The Head"):
+-- 1. Quorum: node only acts as leader if it can see majority of nodes
+--    (so if 3-node cluster partitions to 2+1, only the 2-node side leads)
+-- 2. Fence the old leader: forcibly revoke its access to storage (SCSI reservation)
+-- 3. Epoch/term numbering (Raft / Paxos): old leader's commands from "term N" are
+--    rejected when the new leader is in "term N+1"
+
+-- Raft consensus algorithm (used by etcd, Consul, TiKV):
+-- Nodes elect a leader via majority vote (quorum)
+-- Leader sends heartbeats to prevent new elections
+-- If majority don't hear heartbeat → new election
+-- New leader has term number higher than old; old leader's writes rejected</div>
+
+      <h2>Replication Topology Patterns</h2>
+      <table>
+        <tr><th>Topology</th><th>Description</th><th>Best For</th></tr>
+        <tr><td>Single leader + async replicas</td><td>One write node; multiple read replicas</td><td>Most web apps, read-heavy workloads</td></tr>
+        <tr><td>Single leader + sync standby</td><td>One sync replica for HA; others async for reads</td><td>HA + read scaling (financial apps)</td></tr>
+        <tr><td>Multi-leader (active-active)</td><td>Multiple write nodes in different DCs</td><td>Multi-region low-latency writes</td></tr>
+        <tr><td>Leaderless (Dynamo-style)</td><td>Any node accepts writes; quorum consistency</td><td>Cassandra, DynamoDB — high availability priority</td></tr>
+        <tr><td>Chain replication</td><td>Writes go head→middle→tail; tail serves reads</td><td>Object stores (HDFS design), strong consistency</td></tr>
+      </table>
+
+      <div class="tip-box">
+        <strong>Production recommendation for most applications:</strong>
+        <ol>
+          <li>1 synchronous replica for zero-data-loss HA (auto-fails over in &lt;30s)</li>
+          <li>1-2 async read replicas for read traffic</li>
+          <li>Monitoring of replica lag — alert at &gt;5 seconds</li>
+          <li>Patroni or managed RDS Multi-AZ for automated failover</li>
+        </ol>
+      </div>
+
+      <h2>Summary</h2>
+      <ul>
+        <li>Primary-replica replication: single write node, multiple read nodes; async is fast but may lose data</li>
+        <li>Synchronous replication: zero data loss but writes block until replica confirms; adds latency</li>
+        <li>Failover needs automatic promotion (Patroni, PgBouncer, RDS Multi-AZ) for sub-minute recovery</li>
+        <li>Multi-primary enables multi-region writes but requires conflict resolution strategy</li>
+        <li>Leaderless (quorum-based) replication: any node takes writes; W+R>N gives strong consistency</li>
+        <li>Split-brain prevention requires quorum + fencing; Raft/Paxos algorithms handle this with epoch numbers</li>
+      </ul>
+    </article>
+  </main>
+
+  <footer class="page-footer">
+    <p>Part of the DBMS Series — <a href="/articles.html">View all articles</a></p>
+  </footer>
+</body>
+</html>

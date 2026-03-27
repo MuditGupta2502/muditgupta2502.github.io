@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>Window Functions, ROLLUP, CUBE & Analytical SQL | Mudit Gupta</title>
+  <meta name="description" content="Master SQL window functions: OVER(), PARTITION BY, ORDER BY, frame clauses, ranking functions (RANK, DENSE_RANK, ROW_NUMBER), LAG/LEAD, running totals, ROLLUP, CUBE, and GROUPING SETS." />
+  <link rel="stylesheet" href="/assets/css/articles.css" />
+  <style>
+    .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
+    .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; color: #1a1a1a; }
+    .article-content h3 { margin-top: 1.5rem; margin-bottom: 0.75rem; color: #1a1a1a; }
+    .article-content p { margin-bottom: 1rem; color: #333; }
+    .article-content ul, .article-content ol { margin-left: 2rem; margin-bottom: 1rem; }
+    .article-content li { margin-bottom: 0.5rem; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; white-space: pre; margin-bottom: 1rem; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    table th, table td { border: 1px solid #ddd; padding: 0.75rem; text-align: left; }
+    table th { background: #f0f0f0; font-weight: 600; }
+    .note-box { background: #fff8e1; border-left: 4px solid #f9a825; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .tip-box { background: #e8f5e9; border-left: 4px solid #43a047; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a href="/" class="home-link">Mudit Gupta</a>
+      <div class="topbar-actions">
+        <a href="/articles.html" class="btn btn-outline">Articles</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <article class="article-content">
+      <p class="kicker">DBMS Series | Part 020</p>
+      <h1>Window Functions, ROLLUP, CUBE &amp; Analytical SQL</h1>
+      <p class="meta">SQL Analytics | 30 min read</p>
+
+      <p>
+        Window functions are arguably the most powerful analytical SQL feature — they let you compute
+        aggregations and rankings across "windows" of rows <em>while keeping each individual row intact</em>.
+        Unlike GROUP BY which collapses rows, window functions add a computed value alongside each row.
+        Pair them with ROLLUP, CUBE, and GROUPING SETS for multi-dimensional reporting, and you can
+        answer virtually any analytical question in SQL.
+      </p>
+
+      <h2>Window Function Anatomy</h2>
+      <div class="code-block">aggregate_or_ranking_function(...)
+OVER (
+  [PARTITION BY partition_expression [, ...]]  -- divide into groups
+  [ORDER BY sort_expression [ASC|DESC] [, ...]] -- order within each group
+  [frame_clause]                                -- which rows are in the "window"
+)
+
+-- frame_clause syntax:
+{ROWS | RANGE | GROUPS} 
+BETWEEN {UNBOUNDED PRECEDING | n PRECEDING | CURRENT ROW | n FOLLOWING | UNBOUNDED FOLLOWING}
+AND     {UNBOUNDED PRECEDING | n PRECEDING | CURRENT ROW | n FOLLOWING | UNBOUNDED FOLLOWING}
+
+-- Common frame shortcuts:
+ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW  -- all rows up to current = running total
+ROWS BETWEEN 2 PRECEDING AND CURRENT ROW          -- current row + 2 rows before = 3-row moving avg
+ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING  -- entire partition</div>
+
+      <h2>Ranking Functions</h2>
+      <div class="code-block">SELECT
+  order_id,
+  customer_id,
+  total,
+  order_date,
+  -- ROW_NUMBER: unique sequential number, no ties
+  ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY total DESC) AS row_num,
+  -- RANK: ties get same rank, next rank skips (1,1,3)
+  RANK()       OVER (PARTITION BY customer_id ORDER BY total DESC) AS rnk,
+  -- DENSE_RANK: ties get same rank, no gaps (1,1,2)
+  DENSE_RANK() OVER (PARTITION BY customer_id ORDER BY total DESC) AS dense_rnk,
+  -- PERCENT_RANK: relative rank as percentage (0 to 1)
+  PERCENT_RANK() OVER (ORDER BY total DESC) AS pct_rank,
+  -- NTILE(n): divide into n equal buckets
+  NTILE(4) OVER (ORDER BY total DESC) AS quartile
+FROM Orders;
+
+-- Top-1 order per customer (most expensive)
+SELECT * FROM (
+  SELECT *, ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY total DESC) AS rn
+  FROM Orders
+) t WHERE rn = 1;
+
+-- Top-3 products by revenue per category
+SELECT product_id, name, category, revenue FROM (
+  SELECT
+    p.product_id, p.name, p.category,
+    SUM(oi.quantity * oi.unit_price) AS revenue,
+    RANK() OVER (PARTITION BY p.category ORDER BY SUM(oi.quantity * oi.unit_price) DESC) AS rnk
+  FROM Products p JOIN OrderItems oi USING(product_id)
+  GROUP BY p.product_id, p.name, p.category
+) x WHERE rnk <= 3;</div>
+
+      <div class="note-box">
+        <strong>ROW_NUMBER vs RANK vs DENSE_RANK:</strong> For eliminating duplicates in "top-N per group,"
+        use ROW_NUMBER. For "all tied winners," use RANK or DENSE_RANK. Use DENSE_RANK when you
+        don't want gaps in the ranking sequence.
+      </div>
+
+      <h2>Aggregate Window Functions</h2>
+      <div class="code-block">SELECT
+  order_id,
+  customer_id,
+  total,
+  order_date,
+  -- Running total (cumulative sum ordered by date)
+  SUM(total) OVER (PARTITION BY customer_id ORDER BY order_date
+                   ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS running_total,
+  -- Each customer's total as a % of their lifetime spend
+  total / SUM(total) OVER (PARTITION BY customer_id) * 100 AS pct_of_lifetime,
+  -- Average order value per customer
+  AVG(total) OVER (PARTITION BY customer_id) AS customer_avg,
+  -- Count of orders placed before this one (per customer)
+  COUNT(*) OVER (PARTITION BY customer_id ORDER BY order_date
+                 ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS prior_orders,
+  -- Maximum single order per customer
+  MAX(total) OVER (PARTITION BY customer_id) AS customer_max
+FROM Orders;</div>
+
+      <h2>LAG and LEAD: Accessing Adjacent Rows</h2>
+      <div class="code-block">SELECT
+  order_date,
+  revenue,
+  -- Previous day's revenue
+  LAG(revenue, 1, 0) OVER (ORDER BY order_date) AS prev_day_revenue,
+  -- Next day's revenue
+  LEAD(revenue, 1, 0) OVER (ORDER BY order_date) AS next_day_revenue,
+  -- Day-over-day growth rate
+  ROUND(
+    (revenue - LAG(revenue, 1) OVER (ORDER BY order_date)) /
+    NULLIF(LAG(revenue, 1) OVER (ORDER BY order_date), 0) * 100,
+    2
+  ) AS dod_growth_pct
+FROM (
+  SELECT DATE_TRUNC('day', order_date) AS order_date, SUM(total) AS revenue
+  FROM Orders GROUP BY 1
+) daily_revenue
+ORDER BY order_date;
+
+-- LAG/LEAD to detect state changes (e.g., session analysis)
+SELECT
+  user_id,
+  event_type,
+  event_time,
+  LAG(event_type) OVER (PARTITION BY user_id ORDER BY event_time) AS prev_event,
+  LEAD(event_type) OVER (PARTITION BY user_id ORDER BY event_time) AS next_event
+FROM UserEvents;</div>
+
+      <h2>FIRST_VALUE and LAST_VALUE</h2>
+      <div class="code-block">SELECT
+  customer_id,
+  order_id,
+  order_date,
+  total,
+  -- First (earliest) order amount for each customer
+  FIRST_VALUE(total) OVER (PARTITION BY customer_id ORDER BY order_date
+                            ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS first_order_total,
+  -- Last (most recent) order amount
+  LAST_VALUE(total) OVER (PARTITION BY customer_id ORDER BY order_date
+                           ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS last_order_total
+FROM Orders;
+
+-- Note: LAST_VALUE needs explicit UNBOUNDED FOLLOWING frame
+-- Without it, default frame is RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+-- making LAST_VALUE equal to the current row</div>
+
+      <h2>Moving Averages and Rolling Windows</h2>
+      <div class="code-block">-- 7-day moving average of daily revenue (time-series analysis)
+SELECT
+  order_date,
+  daily_revenue,
+  AVG(daily_revenue) OVER (
+    ORDER BY order_date
+    ROWS BETWEEN 6 PRECEDING AND CURRENT ROW  -- current + 6 prior days = 7 days
+  ) AS moving_avg_7d,
+  -- 30-day rolling sum
+  SUM(daily_revenue) OVER (
+    ORDER BY order_date
+    ROWS BETWEEN 29 PRECEDING AND CURRENT ROW
+  ) AS rolling_sum_30d
+FROM (
+  SELECT
+    DATE_TRUNC('day', order_date)::DATE AS order_date,
+    SUM(total) AS daily_revenue
+  FROM Orders
+  GROUP BY 1
+) daily
+ORDER BY order_date;</div>
+
+      <h2>NTH_VALUE and CUME_DIST</h2>
+      <div class="code-block">SELECT
+  product_id,
+  name,
+  price,
+  category,
+  -- 2nd most expensive product in each category
+  NTH_VALUE(price, 2) OVER (
+    PARTITION BY category
+    ORDER BY price DESC
+    ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+  ) AS second_highest_price,
+  -- Cumulative distribution (fraction of rows with value <= current)
+  CUME_DIST() OVER (PARTITION BY category ORDER BY price) AS price_cume_dist
+FROM Products;</div>
+
+      <h2>GROUP BY Extensions: ROLLUP, CUBE, GROUPING SETS</h2>
+      <p>
+        These extensions generate multiple grouping levels in a single query — essential for
+        cross-tabulation and hierarchical reporting.
+      </p>
+
+      <h3>ROLLUP: Hierarchical Subtotals</h3>
+      <div class="code-block">-- Sales by year > quarter > month, with subtotals at each level
+SELECT
+  EXTRACT(YEAR FROM order_date)  AS year,
+  EXTRACT(QUARTER FROM order_date) AS quarter,
+  EXTRACT(MONTH FROM order_date) AS month,
+  SUM(total) AS revenue,
+  COUNT(*) AS orders
+FROM Orders
+GROUP BY ROLLUP(
+  EXTRACT(YEAR FROM order_date),
+  EXTRACT(QUARTER FROM order_date),
+  EXTRACT(MONTH FROM order_date)
+)
+ORDER BY 1 NULLS LAST, 2 NULLS LAST, 3 NULLS LAST;
+
+-- ROLLUP generates grouping sets:
+-- (year, quarter, month) -- already in GROUP BY
+-- (year, quarter)        -- quarterly subtotals
+-- (year)                 -- annual subtotals
+-- ()                     -- grand total
+-- NULLs in grouping columns indicate the subtotal row for that level</div>
+
+      <h3>CUBE: All Combinations</h3>
+      <div class="code-block">-- Sales analysis across all combinations of category, region, year
+SELECT
+  category,
+  region,
+  EXTRACT(YEAR FROM order_date) AS year,
+  SUM(oi.quantity * oi.unit_price) AS revenue
+FROM Orders o
+JOIN OrderItems oi USING(order_id)
+JOIN Products p ON oi.product_id = p.product_id
+JOIN Customers c ON o.customer_id = c.customer_id
+GROUP BY CUBE(category, region, EXTRACT(YEAR FROM order_date))
+ORDER BY category NULLS LAST, region NULLS LAST, year NULLS LAST;
+
+-- CUBE(A, B, C) generates 2³=8 grouping sets:
+-- (A,B,C), (A,B), (A,C), (B,C), (A), (B), (C), ()
+-- total "in category AND region AND year", in every combination</div>
+
+      <h3>GROUPING SETS: Custom Combinations</h3>
+      <div class="code-block">-- Only specific grouping combinations (not all of CUBE)
+SELECT
+  category,
+  region,
+  EXTRACT(YEAR FROM order_date) AS year,
+  SUM(total) AS revenue
+FROM Orders o
+JOIN OrderItems oi USING(order_id)
+JOIN Products p USING(product_id)
+JOIN Customers c ON o.customer_id = c.customer_id
+GROUP BY GROUPING SETS (
+  (category, region),      -- by category AND region combined
+  (category, year),        -- by category AND year combined
+  (region),                -- total by region only
+  ()                       -- grand total
+);
+
+-- Use GROUPING() function to distinguish NULL-from-data vs NULL-from-rollup
+SELECT
+  CASE WHEN GROUPING(category) = 1 THEN 'ALL CATEGORIES' ELSE category END AS cat,
+  CASE WHEN GROUPING(region)   = 1 THEN 'ALL REGIONS'   ELSE region   END AS reg,
+  SUM(total) AS revenue
+FROM Orders ...
+GROUP BY ROLLUP(category, region);</div>
+
+      <h2>Named Windows</h2>
+      <div class="code-block">-- Avoid repeating long OVER() clauses with named windows
+SELECT
+  order_id,
+  customer_id,
+  total,
+  SUM(total)   OVER w AS customer_total,
+  AVG(total)   OVER w AS customer_avg,
+  COUNT(*)     OVER w AS customer_orders,
+  RANK()       OVER w AS order_rank
+FROM Orders
+WINDOW w AS (PARTITION BY customer_id ORDER BY total DESC);
+-- The WINDOW clause defines 'w' once, used multiple times</div>
+
+      <h2>Real-World Analytical Query: Customer Cohort Retention</h2>
+      <div class="code-block">-- Monthly retention: what % of customers from first_order_month place another order each month?
+WITH first_orders AS (
+  SELECT customer_id, DATE_TRUNC('month', MIN(order_date)) AS cohort_month
+  FROM Orders GROUP BY customer_id
+),
+monthly_orders AS (
+  SELECT o.customer_id, DATE_TRUNC('month', o.order_date) AS order_month, f.cohort_month,
+    (EXTRACT(YEAR FROM AGE(DATE_TRUNC('month', o.order_date), f.cohort_month)) * 12
+     + EXTRACT(MONTH FROM AGE(DATE_TRUNC('month', o.order_date), f.cohort_month))) AS months_since
+  FROM Orders o JOIN first_orders f ON o.customer_id = f.customer_id
+)
+SELECT
+  cohort_month,
+  months_since,
+  COUNT(DISTINCT customer_id) AS active_customers,
+  COUNT(DISTINCT customer_id) * 100.0 /
+    FIRST_VALUE(COUNT(DISTINCT customer_id)) OVER (
+      PARTITION BY cohort_month ORDER BY months_since
+    ) AS retention_pct
+FROM monthly_orders
+GROUP BY cohort_month, months_since
+ORDER BY cohort_month, months_since;</div>
+
+      <div class="tip-box">
+        <strong>Performance tip:</strong> Window functions execute after WHERE, GROUP BY, and HAVING
+        but before LIMIT and ORDER BY. They can't be referenced in WHERE (that's what CTEs are for).
+        Index on the PARTITION BY and ORDER BY columns significantly improves window function performance.
+      </div>
+
+      <h2>Summary</h2>
+      <ul>
+        <li><strong>OVER(PARTITION BY ... ORDER BY ...):</strong> Defines the "window" — group and order within which the function computes</li>
+        <li><strong>ROW_NUMBER / RANK / DENSE_RANK:</strong> Ranking within groups — ROW_NUMBER for deduplication, RANK/DENSE_RANK for ties</li>
+        <li><strong>SUM/AVG/COUNT OVER:</strong> Aggregate without collapsing rows — running totals, group comparisons</li>
+        <li><strong>LAG/LEAD:</strong> Access previous/next row — period-over-period analysis, state transitions</li>
+        <li><strong>Frame clauses:</strong> Control which rows are included in the computation — moving averages, rolling sums</li>
+        <li><strong>ROLLUP:</strong> Hierarchical subtotals — year → quarter → month → grand total</li>
+        <li><strong>CUBE:</strong> All combinations of dimension subtotals — cross-tabulation</li>
+        <li><strong>GROUPING SETS:</strong> Custom subset of grouping combinations</li>
+      </ul>
+    </article>
+  </main>
+
+  <footer class="page-footer">
+    <p>Part of the DBMS Series — <a href="/articles.html">View all articles</a></p>
+  </footer>
+</body>
+</html>

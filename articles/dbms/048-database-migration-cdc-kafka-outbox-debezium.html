@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>Database Migration and Event-Driven Architecture: CDC, Kafka, Outbox and Debezium | Mudit Gupta</title>
+  <meta name="description" content="Zero-downtime schema migrations, expand/contract pattern, CDC with Debezium, Kafka event streaming, and Outbox pattern for reliable event publishing." />
+  <link rel="stylesheet" href="/assets/css/articles.css" />
+  <style>
+    .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
+    .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; white-space: pre; overflow-x: auto; font-family: monospace; }
+    .danger-box { background: #ffebee; border-left: 4px solid #e53935; padding: 0.75rem 1rem; margin: 1rem 0; }
+  </style>
+</head>
+<body>
+<header class="topbar"><div class="topbar-inner"><a href="/" class="home-link">Mudit Gupta</a><div class="topbar-actions"><a href="/articles.html" class="btn btn-outline">Articles</a></div></div></header>
+<main><article class="article-content">
+<p class="kicker">DBMS Series | Part 048</p>
+<h1>Database Migration and Event-Driven Architecture: CDC, Kafka, Outbox and Debezium</h1>
+<p class="meta">Architecture | 24 min read</p>
+
+<p>Production schema changes are risky because applications and data evolve together. The safest migrations are backward-compatible, staged, and observable.</p>
+
+<h2>Expand and Contract Migration Pattern</h2>
+<div class="code-block">-- Goal: rename users.full_name -> users.display_name without downtime
+
+-- Phase 1 (Expand): add new column, keep old column
+ALTER TABLE users ADD COLUMN display_name TEXT;
+
+-- Phase 2: dual-write from application
+-- INSERT/UPDATE writes both full_name and display_name
+
+-- Phase 3: backfill historical rows in batches
+UPDATE users
+SET display_name = full_name
+WHERE display_name IS NULL
+LIMIT 10000;  -- loop in app/job until complete
+
+-- Phase 4: read-switch
+-- application reads display_name, still writes both for safety window
+
+-- Phase 5 (Contract): remove old column when safe
+ALTER TABLE users DROP COLUMN full_name;</div>
+
+<h2>CDC (Change Data Capture)</h2>
+<div class="code-block">-- CDC captures row changes from DB logs (WAL/binlog) and streams them to consumers
+-- Typical flow: PostgreSQL WAL -> Debezium -> Kafka -> downstream services
+
+-- Why CDC:
+-- 1. Build read models/search indexes asynchronously
+-- 2. Feed analytics warehouse in near real-time
+-- 3. Integrate microservices without direct DB coupling
+
+-- Debezium emits events like:
+-- {"op":"c","before":null,"after":{"id":123,"status":"paid"}}
+-- {"op":"u","before":{"status":"pending"},"after":{"status":"paid"}}</div>
+
+<h2>Outbox Pattern</h2>
+<div class="code-block">-- Problem: DB commit succeeds but Kafka publish fails -> data/event inconsistency
+-- Solution: write business row and outbox row in SAME DB transaction
+
+CREATE TABLE outbox_events (
+  id BIGSERIAL PRIMARY KEY,
+  aggregate_type TEXT NOT NULL,
+  aggregate_id TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  payload JSONB NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  published BOOLEAN DEFAULT FALSE
+);
+
+BEGIN;
+INSERT INTO orders (id, customer_id, status, total) VALUES (1001, 42, 'created', 999.00);
+INSERT INTO outbox_events (aggregate_type, aggregate_id, event_type, payload)
+VALUES ('order', '1001', 'OrderCreated', '{"order_id":1001,"total":999.00}');
+COMMIT;
+
+-- Publisher service reads unpublished outbox rows and sends to Kafka
+-- Then marks published=true (idempotent with unique event key)</div>
+
+<h2>Migration Tooling</h2>
+<div class="code-block">-- Flyway migration naming:
+-- V1__create_users.sql
+-- V2__add_display_name.sql
+-- V3__backfill_display_name.sql
+
+-- Liquibase supports declarative XML/YAML/SQL changelogs with rollback blocks
+
+-- Operational guidance:
+-- 1. Keep each migration small and reversible
+-- 2. Run in off-peak windows if it touches large tables
+-- 3. Monitor lock waits and query latency during rollout</div>
+
+<div class="danger-box"><strong>Anti-pattern:</strong> deploy app code that assumes new column exists before migration runs. Always deploy backward-compatible code first, then run migration, then switch reads/writes.</div>
+
+<h2>Summary</h2>
+<ul>
+  <li>Use expand/contract for zero-downtime schema evolution.</li>
+  <li>CDC streams committed changes from transaction logs to downstream systems.</li>
+  <li>Outbox pattern gives reliable event publishing without distributed transactions.</li>
+  <li>Use Flyway/Liquibase to version and automate migrations safely.</li>
+</ul>
+</article></main>
+<footer class="page-footer"><p>Part of the DBMS Series — <a href="/articles.html">View all articles</a></p></footer>
+</body>
+</html>

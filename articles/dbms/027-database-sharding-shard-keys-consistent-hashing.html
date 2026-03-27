@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>Database Sharding: Horizontal Scaling, Shard Keys and Consistent Hashing | Mudit Gupta</title>
+  <meta name="description" content="Horizontal database sharding strategies, shard key selection, consistent hashing, virtual nodes, resharding techniques, and cross-shard query challenges." />
+  <link rel="stylesheet" href="/assets/css/articles.css" />
+  <style>
+    .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
+    .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; color: #1a1a1a; }
+    .article-content h3 { margin-top: 1.5rem; margin-bottom: 0.75rem; color: #1a1a1a; }
+    .article-content p { margin-bottom: 1rem; color: #333; }
+    .article-content ul, .article-content ol { margin-left: 2rem; margin-bottom: 1rem; }
+    .article-content li { margin-bottom: 0.5rem; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; white-space: pre; margin-bottom: 1rem; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    table th, table td { border: 1px solid #ddd; padding: 0.75rem; text-align: left; }
+    table th { background: #f0f0f0; font-weight: 600; }
+    .note-box { background: #fff8e1; border-left: 4px solid #f9a825; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .tip-box { background: #e8f5e9; border-left: 4px solid #43a047; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .danger-box { background: #ffebee; border-left: 4px solid #e53935; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a href="/" class="home-link">Mudit Gupta</a>
+      <div class="topbar-actions">
+        <a href="/articles.html" class="btn btn-outline">Articles</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <article class="article-content">
+      <p class="kicker">DBMS Series | Part 027</p>
+      <h1>Database Sharding: Horizontal Scaling, Shard Keys and Consistent Hashing</h1>
+      <p class="meta">Scaling &amp; Architecture | 27 min read</p>
+
+      <p>
+        Sharding (horizontal partitioning) splits a database across multiple independent servers,
+        each holding a subset of the data. Unlike partitioning on one server, sharding physically
+        distributes data across machines — enabling write scalability that a single server can
+        never achieve. It comes with significant complexity trade-offs.
+      </p>
+
+      <h2>Partitioning vs Sharding</h2>
+      <table>
+        <tr><th></th><th>Partitioning</th><th>Sharding</th></tr>
+        <tr><td>Scope</td><td>One server, multiple physical files</td><td>Multiple servers, each an independent DB</td></tr>
+        <tr><td>Query routing</td><td>Database handles automatically</td><td>Application or middleware routes queries</td></tr>
+        <tr><td>Cross-partition joins</td><td>Supported (handled by query planner)</td><td>Very expensive or impossible (scatter-gather)</td></tr>
+        <tr><td>ACID transactions</td><td>Fully maintained</td><td>Multi-shard transactions require distributed protocols (2PC)</td></tr>
+        <tr><td>Operational complexity</td><td>Low</td><td>Very high</td></tr>
+        <tr><td>When to use</td><td>Large tables, archival, parallel execution</td><td>Write throughput exceeds single-server capacity</td></tr>
+      </table>
+
+      <h2>Shard Key Selection: The Most Critical Decision</h2>
+      <p>
+        The shard key determines how data is distributed. A poor choice causes hot shards,
+        cross-shard queries, and resharding pain. Getting this right defines the system's
+        scalability ceiling.
+      </p>
+      <div class="code-block">-- Good shard key properties:
+-- 1. High cardinality: many distinct values → even distribution
+-- 2. Even distribution: no "celebrity" keys (hot shards)
+-- 3. Query locality: most queries only need ONE shard
+-- 4. Immutable: key should never change after insert (would require moving the row)
+
+-- Bad: sequential ID (also problems with monotonically increasing keys)
+-- Shard A gets rows 1-1000, Shard B gets 1001-2000, etc.
+-- But ALL new writes go to the highest shard → HOT SHARD
+-- Fix: use UUID or hash the sequential ID before sharding
+
+-- Bad: low cardinality (e.g., status: 'active'/'inactive'/'deleted')
+-- Very uneven distribution; can't add more shards than distinct values
+-- Fix: never shard on status; use primary key
+
+-- Good: customer_id (UUID or high-cardinality integer)
+-- Natural query locality: "get customer X's orders" hits one shard
+-- Even distribution if IDs are randomly assigned
+-- Immutable: customer_id doesn't change
+
+-- Good: user_id for social media
+-- "Get user's posts, followers, feed" all on one shard
+-- Locality: user's social graph fits on one shard
+
+-- Problematic: geo-based sharding by country
+-- India may have 500M users vs Luxembourg's 500K
+-- Requires logical sub-sharding or re-sharding over time</div>
+
+      <h2>Sharding Strategies</h2>
+      <h3>Range Sharding</h3>
+      <div class="code-block">-- Assign contiguous ranges of the shard key to each shard
+-- customer_id 1-1,000,000  → Shard 1
+-- customer_id 1,000,001-2,000,000 → Shard 2
+-- customer_id 2,000,001+  → Shard 3
+
+-- Advantages:
+-- Easy range queries: "customers 1M-2M" hits exactly Shard 2
+-- Adding a shard just means extending the range map
+
+-- Disadvantages:
+-- Hot shard on monotonically increasing keys (all new users → last shard)
+-- Manual rebalancing when a range grows disproportionately</div>
+
+      <h3>Hash Sharding (Modulo)</h3>
+      <div class="code-block">-- shard = hash(customer_id) % N_shards
+-- customer_id = 12345 → hash(12345) % 4 = 2 → Shard 2
+
+-- Advantages:
+-- Uniform distribution regardless of key pattern
+-- Simple to implement
+
+-- MAJOR disadvantage: adding a shard changes the formula
+-- With 4 shards: hash(X) % 4 → some shard S
+-- After adding shard 5: hash(X) % 5 → different shard S' for most keys
+-- NEED TO MOVE ~80% OF ALL DATA during resharding (catastrophic)</div>
+
+      <h3>Consistent Hashing (The Solution)</h3>
+      <p>
+        Consistent hashing minimizes data movement when adding or removing shards.
+        Only data on the "adjacent" shard needs to move.
+      </p>
+      <div class="code-block">-- Consistent hashing uses a ring of hash values [0, 2^32)
+-- Shards are placed at positions on the ring (their hash values)
+-- Each key maps to the first shard encountered going clockwise
+
+-- Ring example (4 shards, positions out of 100 for simplicity):
+-- Shard A at position 10
+-- Shard B at position 30
+-- Shard C at position 60
+-- Shard D at position 85
+
+-- Key routing:
+-- key_hash = 5  → clockwise, first shard = A (at 10)
+-- key_hash = 20 → clockwise, first shard = B (at 30)
+-- key_hash = 45 → clockwise, first shard = C (at 60)
+-- key_hash = 75 → clockwise, first shard = D (at 85)
+-- key_hash = 90 → clockwise, wraps around, first shard = A (at 10)
+
+-- ADD a new shard E at position 50:
+-- Only keys between 30 and 50 (previously owned by C) move to E
+-- All other shards and their keys are UNAFFECTED
+-- Amount moved = 1/N of data (not 80% like modulo hashing)</div>
+
+      <h3>Virtual Nodes (VNodes)</h3>
+      <div class="code-block">-- Problem with basic consistent hashing: with 4 shards, each gets ~25% of ring
+-- But if Shard C fails, ALL of its ~25% load moves to Shard D (overload)
+-- Also: adding a shard only helps the adjacent shard (uneven relief)
+
+-- Solution: virtual nodes — each physical shard owns MANY positions on the ring
+-- Physical Shard A → virtual positions at: 5, 22, 47, 68, 91 (5 positions)
+-- Physical Shard B → virtual positions at: 12, 35, 54, 73, 88 (5 positions)
+-- etc.
+
+-- When Shard A fails: its 5 virtual positions are distributed among all remaining shards
+-- Load is spread evenly across multiple shards (not just one)
+
+-- When a new Shard E is added: it takes a few virtual positions from each existing shard
+-- Load reduction is shared proportionally across all shards
+
+-- Used by: Cassandra (256 vnodes per physical node by default), Amazon DynamoDB, Riak</div>
+
+      <h2>Query Routing Architecture</h2>
+      <div class="code-block">-- The application needs to know which shard to query.
+-- Three approaches:
+
+-- 1. Application-level routing:
+-- App computes: shard_id = consistent_hash(customer_id) % N
+-- Opens connection to ShardDB-{shard_id}
+-- Downside: every application must know shard topology
+
+-- 2. Proxy layer (Vitess, ProxySQL, Citus):
+-- App connects to proxy (looks like a normal DB)
+-- Proxy reads routing config, forwards to correct shard
+-- App is decoupled from shard topology changes
+
+-- 3. Lookup/Directory service:
+-- Separate table: customer_id → shard_id
+-- App queries directory first, then queries the right shard
+-- Flexible: can move a specific customer to a new shard by updating directory
+-- Extra hop: one more network round trip per query
+
+-- Scatter-gather for non-sharded queries:
+-- "Top 100 customers by revenue" → must query ALL shards
+-- Proxy sends query to all N shards in parallel
+-- Collects top 100 from each, merges results
+-- Cost is O(N) — scales with number of shards</div>
+
+      <h2>Cross-Shard Transactions</h2>
+      <div class="code-block">-- Avoid if at all possible — greatly increases latency and complexity
+
+-- Problem: transfer $100 from customer 1001 (Shard 2) to customer 2002 (Shard 7)
+-- Requires atomic update on two independent database servers
+
+-- Option 1: Two-Phase Commit (2PC)
+-- Phase 1 (Prepare): coordinator asks both shards to hold locks and prepare
+-- Phase 2 (Commit): if both prepared successfully, coordinator sends COMMIT to both
+-- Downside: blocking protocol; if coordinator crashes after Phase 1, shards are stuck
+
+-- Option 2: Saga pattern (eventually consistent)
+-- Execute local transaction on Shard 2 (debit $100 from customer 1001)
+-- Publish event: "Payment debited"
+-- Shard 7 picks up event and credits $100 to customer 2002
+-- Compensating transaction if step 2 fails: re-credit customer 1001
+-- No distributed locks; eventual consistency
+
+-- Option 3: Design sharding to avoid cross-shard transactions
+-- For a payments system: shard by transaction_id (self-contained)
+-- Both sender and receiver rows on potentially different shards — accept eventual consistency
+-- Consider co-locating: put both sender and receiver data on same shard (by payment amount hash)</div>
+
+      <div class="danger-box">
+        <strong>When NOT to shard:</strong> Sharding is irreversible and massively increases
+        operational complexity. Before sharding: (1) optimize queries, (2) add indexes,
+        (3) use read replicas for read scaling, (4) use partitioning on one server,
+        (5) use connection poolers (PgBouncer). Most applications never need to shard —
+        a single well-tuned PostgreSQL instance handles millions of read queries per second
+        with proper caching and connection pooling.
+      </div>
+
+      <h2>Summary</h2>
+      <ul>
+        <li>Sharding distributes data across independent database servers for write scalability</li>
+        <li>Shard key must have high cardinality, distribute evenly, and provide query locality</li>
+        <li>Modulo hashing is simple but catastrophic to reshard; consistent hashing moves minimal data</li>
+        <li>Virtual nodes ensure balanced redistribution when shards are added or removed</li>
+        <li>Cross-shard queries require scatter-gather; cross-shard transactions require 2PC or Saga</li>
+        <li>Prefer partitioning + read replicas + caching before reaching for sharding</li>
+      </ul>
+    </article>
+  </main>
+
+  <footer class="page-footer">
+    <p>Part of the DBMS Series — <a href="/articles.html">View all articles</a></p>
+  </footer>
+</body>
+</html>

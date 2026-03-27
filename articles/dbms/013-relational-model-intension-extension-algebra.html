@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>Relational Model: Intension, Extension & Relational Algebra | Mudit Gupta</title>
+  <meta name="description" content="Deep dive into the formal relational model: schema vs instance (intension vs extension), relational constraints, and all 8 fundamental relational algebra operations with SQL equivalents." />
+  <link rel="stylesheet" href="/assets/css/articles.css" />
+  <style>
+    .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
+    .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; color: #1a1a1a; }
+    .article-content h3 { margin-top: 1.5rem; margin-bottom: 0.75rem; color: #1a1a1a; }
+    .article-content p { margin-bottom: 1rem; color: #333; }
+    .article-content ul, .article-content ol { margin-left: 2rem; margin-bottom: 1rem; }
+    .article-content li { margin-bottom: 0.5rem; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; white-space: pre; margin-bottom: 1rem; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    table th, table td { border: 1px solid #ddd; padding: 0.75rem; text-align: left; }
+    table th { background: #f0f0f0; font-weight: 600; }
+    .note-box { background: #fff8e1; border-left: 4px solid #f9a825; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .tip-box { background: #e8f5e9; border-left: 4px solid #43a047; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a href="/" class="home-link">Mudit Gupta</a>
+      <div class="topbar-actions">
+        <a href="/articles.html" class="btn btn-outline">Articles</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <article class="article-content">
+      <p class="kicker">DBMS Series | Part 013</p>
+      <h1>Relational Model: Intension, Extension &amp; Relational Algebra</h1>
+      <p class="meta">Database Theory | 25 min read</p>
+
+      <p>
+        Edgar Codd introduced the relational model in 1970, providing a formal mathematical foundation
+        for data management. Before SQL existed, relational algebra defined exactly what operations a
+        relational database must support. Understanding the formal model — intension vs extension,
+        constraints, and the complete set of algebraic operations — gives you a far deeper understanding
+        of how database engines work and why SQL is designed the way it is.
+      </p>
+
+      <h2>Formal Definitions</h2>
+
+      <h3>Relation</h3>
+      <p>
+        A <strong>relation</strong> (table) is a subset of the Cartesian product of its attribute domains.
+        If a relation R has attributes A1, A2, ..., An with domains D1, D2, ..., Dn, then:
+      </p>
+      <div class="code-block">R ⊆ D1 × D2 × ... × Dn
+
+A tuple (row) t ∈ R is an ordered list (v1, v2, ..., vn) where vi ∈ Di
+
+Key properties:
+- No duplicate tuples (set-based semantics; SQL tables are bags unless DISTINCT used)
+- No order among tuples
+- No order among attributes (tuples are accessed by attribute name, not position)
+- Atomic attribute values (first normal form requirement)</div>
+
+      <h3>Domain</h3>
+      <p>
+        A <strong>domain</strong> is the set of possible values for an attribute. Domains can be:
+      </p>
+      <ul>
+        <li>Atomic types: INTEGER, VARCHAR(100), DATE, BOOLEAN</li>
+        <li>Formally: a named set with an associated data type, e.g., dom(age) = {x ∈ ℤ | 0 ≤ x ≤ 150}</li>
+      </ul>
+
+      <h2>Intension vs Extension</h2>
+      <p>
+        This is one of the most conceptually important distinctions in the relational model:
+      </p>
+
+      <h3>Intension (Schema / Intent)</h3>
+      <p>
+        The <strong>intension</strong> (also called the <em>schema</em> or <em>relation scheme</em>) is the
+        structural definition of a relation — the attribute names, their domains, constraints, and metadata.
+        The intension is relatively <em>stable</em>; it changes only when the structure of the data changes.
+      </p>
+      <div class="code-block">-- Intension: the CREATE TABLE definition
+CREATE TABLE Orders (
+  order_id    INT         PRIMARY KEY,
+  customer_id INT         NOT NULL REFERENCES Customers(customer_id),
+  order_date  DATE        NOT NULL,
+  total       DECIMAL(10,2) NOT NULL CHECK (total >= 0),
+  status      VARCHAR(20) DEFAULT 'pending'
+);
+-- This definition is the INTENSION of the Orders relation
+-- It doesn't change unless columns are added/dropped/altered</div>
+
+      <h3>Extension (Instance / State)</h3>
+      <p>
+        The <strong>extension</strong> (also called the <em>instance</em> or <em>relation state</em>) is the
+        actual set of tuples in the relation at a given point in time. The extension is <em>dynamic</em>;
+        it changes with every INSERT, UPDATE, and DELETE.
+      </p>
+      <div class="code-block">-- Extension: the actual data at a specific moment
+order_id | customer_id | order_date  | total  | status
+---------|-------------|-------------|--------|----------
+1001     | 42          | 2024-01-15  | 149.99 | shipped
+1002     | 17          | 2024-01-16  | 29.00  | pending
+1003     | 42          | 2024-01-17  | 899.50 | processing
+
+-- This changes constantly as orders are placed, shipped, etc.</div>
+
+      <table>
+        <tr><th>Property</th><th>Intension (Schema)</th><th>Extension (Instance)</th></tr>
+        <tr><td>What it defines</td><td>Structure and constraints</td><td>Actual data at a point in time</td></tr>
+        <tr><td>Stability</td><td>Relatively stable</td><td>Changes frequently</td></tr>
+        <tr><td>SQL representation</td><td>CREATE TABLE statement</td><td>Rows in the table</td></tr>
+        <tr><td>Analogy</td><td>Blueprint of a building</td><td>Furniture and people inside at noon today</td></tr>
+      </table>
+
+      <h2>Relational Constraints</h2>
+      <p>Every valid extension must satisfy all constraints defined in the intension:</p>
+      <ul>
+        <li><strong>Domain constraint:</strong> Every attribute value must come from its domain (e.g., age must be an integer in [0,150])</li>
+        <li><strong>Key constraint:</strong> No two tuples may have the same value for the primary key</li>
+        <li><strong>Entity integrity:</strong> Primary key attributes cannot be NULL</li>
+        <li><strong>Referential integrity:</strong> Foreign key values must reference an existing PK in the referenced relation (or be NULL)</li>
+        <li><strong>Semantic constraints:</strong> Application-level rules expressed via CHECK, triggers, or application code</li>
+      </ul>
+
+      <h2>Relational Algebra</h2>
+      <p>
+        Relational algebra is a procedural query language that defines a set of operations on relations,
+        each of which produces a new relation. SQL is implemented on top of these formal operations.
+        There are <strong>8 fundamental operations</strong>: 5 foundational + 3 derived.
+      </p>
+
+      <h3>1. Selection (σ — Sigma)</h3>
+      <p>
+        Filters tuples (rows) based on a predicate. Returns tuples satisfying the condition.
+        Equivalent to SQL <code>WHERE</code>.
+      </p>
+      <div class="code-block">σ condition(R)
+
+Example: Get all orders with total > 100
+σ total > 100 (Orders)
+
+SQL equivalent: SELECT * FROM Orders WHERE total > 100;
+
+Compound conditions use ∧ (AND), ∨ (OR), ¬ (NOT):
+σ status='shipped' ∧ total > 50 (Orders)</div>
+
+      <h3>2. Projection (π — Pi)</h3>
+      <p>
+        Extracts specific attributes (columns). Equivalent to the SELECT column list in SQL.
+        Automatically eliminates duplicates (set semantics).
+      </p>
+      <div class="code-block">π attribute_list(R)
+
+Example: Get only order_id and total from Orders
+π order_id, total (Orders)
+
+SQL equivalent: SELECT DISTINCT order_id, total FROM Orders;
+-- Note: SQL without DISTINCT is bag semantics; RA is set semantics</div>
+
+      <h3>3. Cartesian Product (× )</h3>
+      <p>
+        Combines every tuple from relation R with every tuple from relation S. If R has n tuples and
+        S has m tuples, the result has n×m tuples. Equivalent to SQL <code>CROSS JOIN</code>.
+      </p>
+      <div class="code-block">R × S
+
+Orders (3 tuples) × Customers (100 tuples) = 300 tuples
+-- Rarely used alone; always followed by selection to form a join
+
+SQL equivalent: SELECT * FROM Orders CROSS JOIN Customers;</div>
+
+      <h3>4. Union (∪)</h3>
+      <p>
+        Combines all tuples from R and S, removing duplicates. R and S must be <em>union-compatible</em>:
+        same number of attributes with compatible domains.
+      </p>
+      <div class="code-block">R ∪ S
+
+Example: All customers from New York OR Chicago
+σ city='New York'(Customers) ∪ σ city='Chicago'(Customers)
+
+SQL equivalent: 
+SELECT * FROM Customers WHERE city='New York'
+UNION
+SELECT * FROM Customers WHERE city='Chicago';</div>
+
+      <h3>5. Set Difference (−)</h3>
+      <p>
+        Returns tuples in R that are not in S. Also requires union-compatible relations.
+      </p>
+      <div class="code-block">R − S
+
+Example: Customers who placed an order but have never been refunded
+π customer_id(Orders) − π customer_id(Refunds)
+
+SQL equivalent:
+SELECT customer_id FROM Orders
+EXCEPT
+SELECT customer_id FROM Refunds;</div>
+
+      <h3>6. Rename (ρ — Rho) — Derived</h3>
+      <p>
+        Renames a relation and/or its attributes. Useful for self-joins and disambiguating operations.
+      </p>
+      <div class="code-block">ρ new_name(A1, A2, ...) (R)
+
+Example: To find pairs of employees in the same department:
+ρ E1(emp_id1, name1, dept1) (Employee) 
+× ρ E2(emp_id2, name2, dept2) (Employee)
+→ then filter: σ dept1 = dept2 ∧ emp_id1 ≠ emp_id2</div>
+
+      <h3>7. Natural Join (⊳⊲) — Derived</h3>
+      <p>
+        Joins two relations on all common attribute names, keeping one copy of each common attribute.
+        This is the "default join" in theoretical discussions.
+      </p>
+      <div class="code-block">R ⊳⊲ S
+
+Example: Orders joined with Customers (on customer_id)
+Orders ⊳⊲ Customers
+→ returns all orders with their matching customer info
+
+Composed from primitives:
+σ Orders.customer_id = Customers.customer_id (Orders × Customers)
+→ then π (remove duplicate customer_id column)
+
+SQL equivalent: 
+SELECT * FROM Orders JOIN Customers USING (customer_id);
+-- or equivalently:
+SELECT * FROM Orders NATURAL JOIN Customers;</div>
+
+      <h3>8. Division (÷) — Derived</h3>
+      <p>
+        The most complex operation. R ÷ S returns the values in R's attributes not in S that are
+        associated with <em>every</em> tuple in S. Used for "find X associated with all Y" queries.
+      </p>
+      <div class="code-block">R ÷ S
+
+Example: Find students who have taken ALL courses offered in CS101 section
+  Enrollments(student_id, course_id)
+  ÷ CS101Courses(course_id)
+→ Returns student_ids enrolled in every CS101 course
+
+Real-world: Find customers who have ordered every product in category "Essential"
+  OrderItems(customer_id, product_id)
+  ÷ π product_id (σ category='Essential' (Products))
+
+SQL equivalent (using NOT EXISTS):
+SELECT DISTINCT e.customer_id
+FROM OrderItems e
+WHERE NOT EXISTS (
+  SELECT p.product_id FROM Products p WHERE p.category = 'Essential'
+  EXCEPT
+  SELECT oi.product_id FROM OrderItems oi WHERE oi.customer_id = e.customer_id
+);</div>
+
+      <h2>Relational Algebra vs SQL</h2>
+      <table>
+        <tr><th>Relational Algebra</th><th>SQL Equivalent</th></tr>
+        <tr><td>σ condition (R)</td><td>WHERE condition</td></tr>
+        <tr><td>π attr1, attr2 (R)</td><td>SELECT DISTINCT attr1, attr2</td></tr>
+        <tr><td>R × S</td><td>FROM R CROSS JOIN S</td></tr>
+        <tr><td>R ∪ S</td><td>UNION</td></tr>
+        <tr><td>R − S</td><td>EXCEPT (or MINUS in Oracle)</td></tr>
+        <tr><td>R ∩ S</td><td>INTERSECT</td></tr>
+        <tr><td>R ⊳⊲ S</td><td>NATURAL JOIN or JOIN...USING</td></tr>
+        <tr><td>R ÷ S</td><td>NOT EXISTS double negation pattern</td></tr>
+      </table>
+
+      <div class="note-box">
+        <strong>Set vs Bag semantics:</strong> Relational algebra operates on sets (no duplicates).
+        SQL operates on bags (multisets) by default — duplicates are preserved unless you use DISTINCT
+        or set operators (UNION, EXCEPT, INTERSECT). This is why SQL is technically not pure relational algebra.
+      </div>
+
+      <h2>Composing Operations: A Complex Query</h2>
+      <p>
+        The real power of relational algebra is composability. Let's express:
+        "Find the names of customers who ordered products from both the 'Electronics' and 'Books' categories
+        and spent more than $200 total."
+      </p>
+      <div class="code-block">-- Step 1: Electronics orders
+Elec ← π customer_id (
+  σ category='Electronics' (Products ⊳⊲ OrderItems ⊳⊲ Orders)
+)
+
+-- Step 2: Books orders  
+Books ← π customer_id (
+  σ category='Books' (Products ⊳⊲ OrderItems ⊳⊲ Orders)
+)
+
+-- Step 3: Customers who ordered BOTH
+Both ← Elec ∩ Books
+
+-- Step 4: Customers who spent > $200
+BigSpenders ← π customer_id (σ total > 200 (Orders))
+
+-- Step 5: Intersection
+Target ← Both ∩ BigSpenders
+
+-- Step 6: Get names
+π name (Target ⊳⊲ Customers)</div>
+
+      <h2>Relational Completeness</h2>
+      <p>
+        A query language is <strong>relationally complete</strong> if it can express every query that
+        relational algebra can express. SQL is relationally complete. Any operation expressible using
+        the 5 fundamental RA operations (σ, π, ×, ∪, −) can be expressed in SQL.
+      </p>
+
+      <div class="tip-box">
+        <strong>For interviews and exams:</strong> The division operator (÷) is the most commonly tested
+        because it's the hardest to translate to SQL. Memorize the NOT EXISTS double negation pattern —
+        it always works for "find X related to ALL Y" problems.
+      </div>
+
+      <h2>Summary</h2>
+      <ul>
+        <li><strong>Intension:</strong> The schema/structure definition — stable, defines what the data can look like</li>
+        <li><strong>Extension:</strong> The actual data instance at a point in time — changes with every DML operation</li>
+        <li>The 5 foundational RA ops: σ (selection), π (projection), × (Cartesian product), ∪ (union), − (difference)</li>
+        <li>The 3 derived ops: ρ (rename), ⊳⊲ (natural join), ÷ (division)</li>
+        <li>Every SQL query can be expressed in relational algebra; SQL is built on these formal foundations</li>
+      </ul>
+    </article>
+  </main>
+
+  <footer class="page-footer">
+    <p>Part of the DBMS Series — <a href="/articles.html">View all articles</a></p>
+  </footer>
+</body>
+</html>

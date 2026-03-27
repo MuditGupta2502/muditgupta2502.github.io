@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta http-equiv="X-UA-Compatible" content="IE=edge" />
+<title>Time-Series Databases: Retention, Downsampling and High-Write Design | Mudit Gupta</title>
+<meta name="description" content="Time-series data modeling with hypertables/partitioning, retention policies, downsampling, and query patterns for metrics and observability workloads." />
+<link rel="stylesheet" href="/assets/css/articles.css" /><style>.article-content{max-width:800px;margin:0 auto;line-height:1.8}.code-block{background:#f5f5f5;padding:1rem;border-radius:4px;white-space:pre;overflow-x:auto;font-family:monospace}</style>
+</head><body>
+<header class="topbar"><div class="topbar-inner"><a href="/" class="home-link">Mudit Gupta</a><div class="topbar-actions"><a href="/articles.html" class="btn btn-outline">Articles</a></div></div></header>
+<main><article class="article-content">
+<p class="kicker">DBMS Series | Part 051</p><h1>Time-Series Databases: Retention, Downsampling and High-Write Design</h1><p class="meta">Specialized DBs | 17 min read</p>
+<p>Time-series workloads are append-heavy and query by time ranges. The schema and retention strategy matter more than complex normalization.</p>
+<h2>Schema Pattern</h2>
+<div class="code-block">CREATE TABLE metrics (
+  ts TIMESTAMPTZ NOT NULL,
+  service TEXT NOT NULL,
+  metric_name TEXT NOT NULL,
+  value DOUBLE PRECISION NOT NULL,
+  tags JSONB
+);
+CREATE INDEX idx_metrics_service_name_ts ON metrics (service, metric_name, ts DESC);</div>
+<h2>Retention and Downsampling</h2>
+<div class="code-block">-- Keep raw 10-second metrics for 30 days
+DELETE FROM metrics WHERE ts < NOW() - INTERVAL '30 days';
+
+-- Store 5-minute rollups for long-term trend analysis
+INSERT INTO metrics_rollup_5m(service, metric_name, bucket, avg_value, p95_value)
+SELECT service, metric_name,
+       date_trunc('minute', ts) - (EXTRACT(minute FROM ts)::int % 5) * INTERVAL '1 minute',
+       AVG(value),
+       percentile_cont(0.95) WITHIN GROUP (ORDER BY value)
+FROM metrics
+WHERE ts >= NOW() - INTERVAL '1 day'
+GROUP BY service, metric_name, 3;</div>
+<h2>Summary</h2><ul>
+<li>Design for append + range scans: index by dimension columns then timestamp.</li>
+<li>Use retention windows to control cost and table size.</li>
+<li>Downsample old data for long-term analytics without keeping full raw detail.</li>
+</ul></article></main>
+<footer class="page-footer"><p>Part of the DBMS Series — <a href="/articles.html">View all articles</a></p></footer>
+</body></html>

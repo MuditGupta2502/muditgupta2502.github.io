@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>Functional Dependency: Types, Rules & Attribute Closure | Mudit Gupta</title>
+  <meta name="description" content="Complete guide to functional dependencies in DBMS: trivial vs non-trivial FDs, partial and transitive dependencies, Armstrong's axioms, attribute closure algorithm, and canonical cover." />
+  <link rel="stylesheet" href="/assets/css/articles.css" />
+  <style>
+    .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
+    .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; color: #1a1a1a; }
+    .article-content h3 { margin-top: 1.5rem; margin-bottom: 0.75rem; color: #1a1a1a; }
+    .article-content p { margin-bottom: 1rem; color: #333; }
+    .article-content ul, .article-content ol { margin-left: 2rem; margin-bottom: 1rem; }
+    .article-content li { margin-bottom: 0.5rem; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; white-space: pre; margin-bottom: 1rem; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    table th, table td { border: 1px solid #ddd; padding: 0.75rem; text-align: left; }
+    table th { background: #f0f0f0; font-weight: 600; }
+    .note-box { background: #fff8e1; border-left: 4px solid #f9a825; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .tip-box { background: #e8f5e9; border-left: 4px solid #43a047; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a href="/" class="home-link">Mudit Gupta</a>
+      <div class="topbar-actions">
+        <a href="/articles.html" class="btn btn-outline">Articles</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <article class="article-content">
+      <p class="kicker">DBMS Series | Part 014</p>
+      <h1>Functional Dependency: Types, Inference Rules &amp; Attribute Closure</h1>
+      <p class="meta">Database Theory | 28 min read</p>
+
+      <p>
+        Functional dependencies (FDs) are the formal heart of normalization theory. They express constraints
+        between attributes — capturing the idea that knowing one attribute's value uniquely determines
+        another's. Mastering FDs means you can formally reason about whether a schema is well-designed,
+        whether it will suffer update anomalies, and exactly how to fix it.
+      </p>
+
+      <h2>What is a Functional Dependency?</h2>
+      <p>
+        A functional dependency X → Y holds in a relation R if, for every valid extension (set of rows) of R,
+        whenever two rows agree on X, they must also agree on Y.
+      </p>
+      <div class="code-block">Formal definition:
+X → Y holds in R iff for all tuples t1, t2 ∈ R:
+  if t1[X] = t2[X], then t1[Y] = t2[Y]
+
+Read as: "X functionally determines Y" or "Y is functionally dependent on X"
+
+Example: In an Employee table:
+  employee_id → name          (knowing the ID, you know the name — one ID, one name)
+  employee_id → department_id
+  department_id → dept_name   (every dept_id maps to exactly one dept name)
+  
+Counter-example: (Does NOT hold as FD)
+  department_id → employee_id  (a department has many employees, so NO)</div>
+
+      <div class="note-box">
+        <strong>Important:</strong> FDs are semantic constraints — they represent business rules, not just
+        what happens to be true in the current data. If today one student happens to have one advisor,
+        that doesn't mean student_id → advisor is an FD unless it's a business rule that every student
+        has exactly one primary advisor.
+      </div>
+
+      <h2>Types of Functional Dependencies</h2>
+
+      <h3>1. Trivial FD</h3>
+      <p>
+        An FD X → Y is <strong>trivial</strong> if Y ⊆ X. These are always true and contain no information.
+      </p>
+      <div class="code-block">Trivial FDs (Y is a subset of X):
+  {A, B} → A          (A is in {A, B}, so trivially true)
+  {order_id, product_id} → order_id   (trivially true)
+  A → A                (always trivially true)
+
+Non-trivial FD:
+  order_id → customer_id   (customer_id is NOT in {order_id})</div>
+
+      <h3>2. Non-Trivial FD</h3>
+      <p>
+        An FD X → Y is <strong>non-trivial</strong> if at least one attribute in Y is not in X.
+        These are the meaningful constraints we care about.
+      </p>
+      <div class="code-block">Non-trivial: Y ⊄ X (at least one Y attribute outside X)
+  order_id → order_date, total   (neither date nor total is in {order_id})
+
+Completely non-trivial: Y ∩ X = ∅ (no overlap at all)
+  order_id → customer_id, total</div>
+
+      <h3>3. Partial Dependency</h3>
+      <p>
+        A <strong>partial dependency</strong> occurs when a non-prime attribute (not part of any candidate key)
+        is functionally determined by only part of a composite key. Partial dependencies violate 2NF.
+      </p>
+      <div class="code-block">Example: OrderDetails(order_id, product_id, quantity, product_name, unit_price)
+  Composite key: {order_id, product_id}
+  
+  Full dependency:  {order_id, product_id} → quantity   (quantity is fully dependent)
+  Partial dep:      product_id → product_name            (product_name depends on just product_id)
+  Partial dep:      product_id → unit_price              (unit_price depends on just product_id)
+
+These partial dependencies mean product_name is stored redundantly for every order line
+that includes that product → update anomaly if the product is renamed.</div>
+
+      <h3>4. Transitive Dependency</h3>
+      <p>
+        A <strong>transitive dependency</strong> occurs when a non-prime attribute depends on another
+        non-prime attribute (indirectly through a chain). These violate 3NF.
+      </p>
+      <div class="code-block">Example: Employee(emp_id, name, dept_id, dept_name, dept_location)
+  Key: emp_id
+  
+  emp_id → dept_id            (direct)
+  dept_id → dept_name         (transitive: emp_id → dept_id → dept_name)
+  dept_id → dept_location     (transitive: emp_id → dept_id → dept_location)
+  
+  So: emp_id → dept_name is TRANSITIVE (goes through dept_id)
+  
+Problem: If Marketing changes its name to Digital Marketing, you must update
+every employee row where dept_id = Marketing → update anomaly.</div>
+
+      <h3>5. Multivalued Dependency</h3>
+      <p>
+        A <strong>multivalued dependency</strong> (X ↠ Y) is a stronger constraint: given X, Y can take
+        multiple independent values that are not constrained by other attributes. These violate 4NF.
+      </p>
+      <div class="code-block">Example: Employee_Skills_Languages(emp_id, skill, language)
+  emp_id ↠ skill     (an employee has multiple skills, independent of languages)
+  emp_id ↠ language  (an employee speaks multiple languages, independent of skills)
+  
+  If employee 1 has skills {Python, SQL} and languages {English, Hindi},
+  then ALL combinations must exist:
+  (1, Python, English), (1, Python, Hindi), (1, SQL, English), (1, SQL, Hindi)
+  
+  This is a fixed-size explosion → decompose into:
+  Employee_Skills(emp_id, skill)
+  Employee_Languages(emp_id, language)</div>
+
+      <h2>Armstrong's Axioms</h2>
+      <p>
+        Armstrong's axioms are a set of <strong>sound and complete</strong> inference rules for deriving all
+        valid functional dependencies from a given set F. "Sound" means they only derive valid FDs; "complete"
+        means they can derive all valid FDs.
+      </p>
+      <table>
+        <tr><th>Axiom</th><th>Rule</th><th>Formal Statement</th></tr>
+        <tr>
+          <td><strong>Reflexivity</strong></td>
+          <td>A set always determines any subset of itself</td>
+          <td>If Y ⊆ X, then X → Y</td>
+        </tr>
+        <tr>
+          <td><strong>Augmentation</strong></td>
+          <td>You can add the same attribute to both sides</td>
+          <td>If X → Y, then XZ → YZ (for any Z)</td>
+        </tr>
+        <tr>
+          <td><strong>Transitivity</strong></td>
+          <td>FDs compose transitively</td>
+          <td>If X → Y and Y → Z, then X → Z</td>
+        </tr>
+      </table>
+
+      <p>From these three axioms, three more useful rules are derived:</p>
+      <table>
+        <tr><th>Rule</th><th>Formal Statement</th><th>Derivation</th></tr>
+        <tr>
+          <td><strong>Union</strong></td>
+          <td>If X → Y and X → Z, then X → YZ</td>
+          <td>Augmentation + Transitivity</td>
+        </tr>
+        <tr>
+          <td><strong>Decomposition</strong></td>
+          <td>If X → YZ, then X → Y and X → Z</td>
+          <td>Reflexivity + Transitivity</td>
+        </tr>
+        <tr>
+          <td><strong>Pseudotransitivity</strong></td>
+          <td>If X → Y and WY → Z, then WX → Z</td>
+          <td>Augmentation + Transitivity</td>
+        </tr>
+      </table>
+
+      <h3>Applying Armstrong's Axioms: Example</h3>
+      <div class="code-block">Given FDs:
+  F = { A → B, B → C, A → D, D → E }
+
+Derive: Can we say A → CE?
+  A → B      (given)
+  B → C      (given)
+  A → C      (transitivity: A→B, B→C)
+  A → D      (given)
+  D → E      (given)
+  A → E      (transitivity: A→D, D→E)
+  A → CE     (union: A→C and A→E)
+  
+Yes, A → CE is derivable.</div>
+
+      <h2>Attribute Closure Algorithm</h2>
+      <p>
+        The <strong>attribute closure</strong> of a set of attributes X under a set of FDs F, written X+,
+        is the largest set of attributes that X functionally determines using the FDs in F.
+      </p>
+      <p>The algorithm:</p>
+      <div class="code-block">ATTRIBUTE-CLOSURE(X, F):
+  result = X             -- start with X itself
+  repeat until no change:
+    for each FD (A → B) in F:
+      if A ⊆ result:       -- if all of A is in result
+        result = result ∪ B  -- add B to result
+  return result          -- result = X+
+
+Example: Given F = {A→BC, B→C, AB→D, D→E}
+Compute {A}+:
+  Start: result = {A}
+  
+  Round 1:
+    A → BC: A ⊆ {A} → add BC → result = {A, B, C}
+    B → C:  B ⊆ {A,B,C} → C already there
+    AB → D: AB ⊆ {A,B,C} → add D → result = {A, B, C, D}
+    D → E:  D ⊆ {A,B,C,D} → add E → result = {A, B, C, D, E}
+  
+  Round 2: no new additions → done
+  {A}+ = {A, B, C, D, E}
+  
+  Since {A}+ contains all attributes → A is a candidate key!</div>
+
+      <h3>Uses of Attribute Closure</h3>
+      <ul>
+        <li><strong>Finding candidate keys:</strong> X is a key if X+ = all attributes and no proper subset of X+ = all attributes</li>
+        <li><strong>Checking FD membership:</strong> X → Y holds in F+ iff Y ⊆ X+</li>
+        <li><strong>NF verification:</strong> Check whether B is prime or non-prime, and whether dependencies hold from the key</li>
+      </ul>
+
+      <h2>Closure of a Set of FDs (F+)</h2>
+      <p>
+        The <strong>closure of F</strong>, written F+, is the complete set of all FDs derivable from F using
+        Armstrong's axioms — including trivial FDs. F+ can be very large (exponential in number of attributes).
+        We rarely compute F+ directly; instead we use attribute closure for specific queries.
+      </p>
+
+      <h2>Canonical Cover (Fc)</h2>
+      <p>
+        A <strong>canonical cover</strong> (minimal cover) Fc is a simplified, equivalent representation
+        of a set of FDs where:
+      </p>
+      <ul>
+        <li>No FD in Fc has a redundant attribute on the left-hand side</li>
+        <li>No FD in Fc is redundant (can be derived from the others)</li>
+        <li>Each FD has a single attribute on the right-hand side (decomposed)</li>
+        <li>Fc+ = F+ (same set of dependencies)</li>
+      </ul>
+      <div class="code-block">Algorithm for Canonical Cover:
+1. Decompose all RHS: A → BC becomes A → B, A → C
+2. Remove redundant LHS attributes: test each attribute in each LHS
+   For A → B in F: can we remove any attribute from A {a1, a2, ...}?
+   Check if (A - {ai})+ includes B; if yes, ai is redundant
+3. Remove redundant FDs: For each FD X → Y, check if Y ⊆ (F - {X→Y})'s closure of X
+
+Example: F = {A→BC, B→C, AB→C}
+Step 1 (decompose): {A→B, A→C, B→C, AB→C}
+Step 2 (remove LHS): In AB→C, is A removable? Compute {B}+ = {B,C} ⊇ {C} → Yes!
+                     → AB→C becomes B→C
+Step 3 (remove redundant): B→C already exists; AB→C (now B→C) is duplicate → remove
+                     Also: A→C: is it derivable? A→B, B→C → A→C by transitivity → YES, remove it
+Final Fc: {A→B, B→C}</div>
+
+      <div class="tip-box">
+        <strong>Canonical cover in practice:</strong> Canonical covers are used in normalization algorithms
+        to determine what tables to create in 3NF decomposition. They ensure you don't create redundant
+        tables while still preserving all dependency information.
+      </div>
+
+      <h2>Dependency Preservation</h2>
+      <p>
+        A decomposition of relation R into R1, R2, ..., Rn is <strong>dependency-preserving</strong> if
+        every FD in F+ can be verified using only the FDs within the individual decomposed relations
+        (without needing to join them back together).
+      </p>
+      <div class="code-block">Formal check: for each FD X → Y in F:
+  compute X+ using only FDs in the local decomposed relations (not F globally)
+  if Y ⊆ X+, the dependency is preserved locally
+
+Why this matters:
+  If a decomposition is not dependency-preserving, you'd need to JOIN tables back together
+  every time you want to verify that a rule isn't violated — very expensive at insert time.
+
+Example: Orders(order_id, customer_id, warehouse_id)
+FDs: customer_id → warehouse_id (each customer is assigned a specific warehouse)
+     {order_id, customer_id} is the key
+
+If decomposed to:
+  R1(order_id, customer_id)
+  R2(order_id, warehouse_id)
+  
+The FD customer_id → warehouse_id cannot be verified in R1 or R2 alone → NOT preserved
+Fix: include customer_id → warehouse_id in a separate table or keep them together.</div>
+
+      <h2>Summary</h2>
+      <ul>
+        <li><strong>FD X → Y:</strong> Whenever two rows agree on X, they agree on Y — a semantic constraint</li>
+        <li><strong>Trivial FD:</strong> Y ⊆ X — always holds, carries no information</li>
+        <li><strong>Partial dependency:</strong> Non-key attribute determined by part of a composite key → violates 2NF</li>
+        <li><strong>Transitive dependency:</strong> Non-key attribute determined transitively through another non-key → violates 3NF</li>
+        <li><strong>Armstrong's axioms:</strong> Reflexivity, Augmentation, Transitivity — sound and complete inference rules</li>
+        <li><strong>Attribute closure X+:</strong> All attributes determined by X — use to find keys and verify FDs</li>
+        <li><strong>Canonical cover:</strong> Minimal equivalent FD set — used in 3NF decomposition algorithms</li>
+      </ul>
+    </article>
+  </main>
+
+  <footer class="page-footer">
+    <p>Part of the DBMS Series — <a href="/articles.html">View all articles</a></p>
+  </footer>
+</body>
+</html>

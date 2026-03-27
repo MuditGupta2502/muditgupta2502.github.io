@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>Query Processing Pipeline: From SQL Text to Execution | Mudit Gupta</title>
+  <meta name="description" content="How databases execute a SQL query: parsing, binding, logical planning, physical planning, cost-based optimization, and execution. Covers EXPLAIN output, statistics, and access paths." />
+  <link rel="stylesheet" href="/assets/css/articles.css" />
+  <style>
+    .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
+    .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; color: #1a1a1a; }
+    .article-content h3 { margin-top: 1.5rem; margin-bottom: 0.75rem; color: #1a1a1a; }
+    .article-content p { margin-bottom: 1rem; color: #333; }
+    .article-content ul, .article-content ol { margin-left: 2rem; margin-bottom: 1rem; }
+    .article-content li { margin-bottom: 0.5rem; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; white-space: pre; margin-bottom: 1rem; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    table th, table td { border: 1px solid #ddd; padding: 0.75rem; text-align: left; }
+    table th { background: #f0f0f0; font-weight: 600; }
+    .note-box { background: #fff8e1; border-left: 4px solid #f9a825; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .tip-box { background: #e8f5e9; border-left: 4px solid #43a047; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a href="/" class="home-link">Mudit Gupta</a>
+      <div class="topbar-actions">
+        <a href="/articles.html" class="btn btn-outline">Articles</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <article class="article-content">
+      <p class="kicker">DBMS Series | Part 021</p>
+      <h1>Query Processing Pipeline: From SQL Text to Execution</h1>
+      <p class="meta">Query Internals | 26 min read</p>
+
+      <p>
+        When you run a SQL query, a remarkable pipeline of transformations happens inside the database
+        engine before a single row is read. Understanding this pipeline is the foundation of query
+        optimization — if you know how the database interprets and plans your query, you can write
+        queries that guide the optimizer toward efficient execution plans.
+      </p>
+
+      <h2>The Six Stages of Query Processing</h2>
+      <div class="code-block">SQL Text
+    ↓
+1. Parsing         — Syntax check, produce parse tree (AST)
+    ↓
+2. Binding         — Semantic validation, resolve names, type check
+    ↓
+3. Logical Plan    — Abstract relational algebra tree
+    ↓
+4. Query Rewriting — Algebraic equivalences, predicate pushdown, subquery unnesting
+    ↓
+5. Physical Plan   — Choose algorithms: index scan vs seq scan, hash join vs merge join
+    ↓
+6. Execution       — Run the plan, stream results to client</div>
+
+      <h2>Stage 1: Parsing</h2>
+      <p>
+        The parser checks SQL syntax and converts the text into a parse tree (Abstract Syntax Tree).
+        It knows nothing about tables or columns yet — only grammar.
+      </p>
+      <div class="code-block">-- Input SQL:
+SELECT c.name, SUM(o.total) AS total_spent
+FROM Customers c
+JOIN Orders o ON c.customer_id = o.customer_id
+WHERE c.city = 'Mumbai'
+GROUP BY c.name
+HAVING SUM(o.total) > 1000;
+
+-- Simplified parse tree output:
+SELECT_STATEMENT
+  SELECT_LIST: [c.name, SUM(o.total) AS total_spent]
+  FROM_CLAUSE: [Customers AS c, Orders AS o]
+  JOIN: ON c.customer_id = o.customer_id
+  WHERE: c.city = 'Mumbai'
+  GROUP_BY: [c.name]
+  HAVING: SUM(o.total) > 1000
+
+-- Syntax errors caught here:
+SELECT * FORM Orders;  -- syntax error: unknown keyword "FORM"</div>
+
+      <h2>Stage 2: Binding (Semantic Analysis)</h2>
+      <p>
+        The binder validates the parse tree against the system catalog (schema). It verifies that
+        tables and columns exist, resolves aliases, checks type compatibility, and validates
+        aggregation rules.
+      </p>
+      <div class="code-block">-- Semantic errors caught at binding:
+SELECT * FROM MissingTable;        -- ERROR: relation does not exist
+SELECT fake_col FROM Orders;       -- ERROR: column "fake_col" does not exist
+SELECT name, SUM(total) FROM Orders GROUP BY customer_id;
+-- ERROR: "name" must appear in GROUP BY or used in an aggregate
+
+-- The binder also:
+-- Expands SELECT * to actual column list
+-- Replaces table/column names with internal OIDs
+-- Validates function signatures and argument types
+-- Resolves ambiguous column references</div>
+
+      <h2>Stage 3: Logical Plan</h2>
+      <p>
+        The bound parse tree is translated into a logical plan — a tree of relational algebra
+        operations representing <em>what</em> to compute (not how). This is still abstract.
+      </p>
+      <div class="code-block">-- Naïve logical plan (before optimization):
+
+HAVING σ(SUM(total) > 1000)
+  ↑
+AGGREGATE γ(c.name, SUM(o.total))
+  ↑
+FILTER σ(city = 'Mumbai')   ← WHERE applied AFTER join in naïve plan
+  ↑
+JOIN ⊳⊲ (c.customer_id = o.customer_id)
+  ↑               ↑
+Customers       Orders</div>
+
+      <h2>Stage 4: Query Rewriting (Logical Optimization)</h2>
+      <p>
+        The rewriter applies equivalence-preserving transformations to reduce cost without changing
+        the result. This is rule-based and always applied before cost-based optimization.
+      </p>
+      <h3>Predicate Pushdown (Most Important)</h3>
+      <div class="code-block">-- Before pushdown: filter after join → all rows joined, then filtered
+JOIN(c.customer_id = o.customer_id)
+├── Customers (all 10M rows)          ← wasteful
+└── Orders    (all 50M rows)
+    ↑ σ(city = 'Mumbai') applied here
+
+-- After pushdown: filter before join → reduce rows entering join
+JOIN(c.customer_id = o.customer_id)
+├── σ(city='Mumbai') Customers  → maybe 500K rows (5% of 10M)
+└── Orders                       → join now processes far fewer combinations</div>
+
+      <h3>Projection Pushdown</h3>
+      <div class="code-block">-- Carry only needed columns through the plan
+-- If we need only c.name and SUM(o.total):
+π(customer_id, name) Customers  ← drop email, phone, address early
+π(customer_id, total) Orders    ← drop order_date, status, etc. early</div>
+
+      <h3>Subquery Unnesting</h3>
+      <div class="code-block">-- Correlated EXISTS → semi-join
+SELECT c.* FROM Customers c
+WHERE EXISTS (SELECT 1 FROM Orders o WHERE o.customer_id = c.customer_id);
+
+-- Rewritten internally as:
+SELECT DISTINCT c.* FROM Customers c
+JOIN Orders o ON c.customer_id = o.customer_id;
+-- Semi-join: returns each customer at most once, short-circuits on first match</div>
+
+      <h2>Stage 5: Physical Plan (Cost-Based Optimization)</h2>
+      <p>
+        The physical planner maps each logical operation to real algorithms and chooses the
+        combination with the lowest estimated cost.
+      </p>
+      <h3>Table Access Methods</h3>
+      <table>
+        <tr><th>Method</th><th>When Chosen</th><th>Cost Characteristic</th></tr>
+        <tr><td>Sequential Scan</td><td>Large fraction of table needed; no selective index</td><td>O(n) predictable sequential I/O</td></tr>
+        <tr><td>Index Scan</td><td>Highly selective WHERE predicate with matching B-tree index</td><td>O(log n) index + random I/O per row</td></tr>
+        <tr><td>Index-Only Scan</td><td>All needed columns are in the index (covering index)</td><td>O(log n) — no heap reads at all</td></tr>
+        <tr><td>Bitmap Index Scan</td><td>Moderate selectivity; OR of multiple indexes</td><td>Builds bitmap in memory; batched heap I/O</td></tr>
+      </table>
+
+      <h3>Join Algorithms</h3>
+      <table>
+        <tr><th>Algorithm</th><th>Complexity</th><th>When Best</th></tr>
+        <tr><td>Nested Loop Join</td><td>O(n × m) or O(n log m) with index</td><td>Small outer, indexed inner (OLTP lookups)</td></tr>
+        <tr><td>Hash Join</td><td>O(n + m) average</td><td>Large unsorted tables, no useful index</td></tr>
+        <tr><td>Merge Join</td><td>O(n + m)</td><td>Both inputs already sorted on join key</td></tr>
+      </table>
+
+      <div class="code-block">-- How the optimizer estimates costs:
+-- Cost = (pages_to_read × page_cost) + (rows_to_process × cpu_cost)
+-- PostgreSQL cost parameters (in arbitrary units):
+--   seq_page_cost    = 1.0    (one sequential I/O page read)
+--   random_page_cost = 4.0    (random I/O is 4x more expensive by default)
+--   cpu_tuple_cost   = 0.01   (processing one tuple)
+--   cpu_index_tuple_cost = 0.005
+
+-- Cardinality estimates use table statistics:
+SELECT attname, n_distinct, correlation, most_common_vals, histogram_bounds
+FROM pg_stats
+WHERE tablename = 'orders';
+-- n_distinct: -0.05 means ~5% of rows are distinct
+-- correlation: 1.0 = perfectly correlated with physical order (fast index scan)
+--             0.0 = random (index scan = many random I/Os)
+
+-- Update statistics when distribution changes significantly
+ANALYZE orders;</div>
+
+      <h2>Stage 6: Execution</h2>
+      <p>
+        The executor runs the physical plan using a volcano/iterator model: each operator is a node
+        in a tree that pulls rows from its children on demand. Results stream to the client as
+        they're produced (important for LIMIT optimizations).
+      </p>
+      <div class="code-block">-- Volcano model: each operator has a "get_next()" method
+-- Parent calls get_next() on child; child calls get_next() on ITS child
+-- Results flow bottom-up through the tree on demand
+
+-- This means LIMIT can be very efficient:
+SELECT * FROM Orders ORDER BY order_date DESC LIMIT 10;
+-- If order_date is indexed, only 10 rows are read via index scan
+-- Without the index, a full sort is needed before LIMIT can be applied
+
+-- Parallel execution (PostgreSQL parallel query):
+-- Nodes like Parallel Seq Scan, Parallel Hash Join split work across workers
+-- Gather node at top collects results from all workers
+EXPLAIN SELECT COUNT(*) FROM Orders WHERE status = 'delivered';
+-- May show: Finalize Aggregate → Gather → Partial Aggregate → Parallel Seq Scan</div>
+
+      <h2>Reading EXPLAIN Output</h2>
+      <div class="code-block">EXPLAIN (ANALYZE, BUFFERS) 
+SELECT c.name, SUM(o.total) 
+FROM Customers c 
+JOIN Orders o ON c.customer_id = o.customer_id 
+WHERE c.city = 'Mumbai' 
+GROUP BY c.name;
+
+-- Sample output:
+HashAggregate  (cost=15420.23..15521.43 rows=10120 width=42)
+               (actual time=234.123..236.891 rows=8543 loops=1)
+  Group Key: c.name
+  Buffers: shared hit=4200 read=1034
+  ->  Hash Join  (cost=1234.10..14234.00 rows=47449 width=42)
+                 (actual time=12.340..198.234 rows=43218 loops=1)
+        Hash Cond: (o.customer_id = c.customer_id)
+        Buffers: shared hit=3100 read=934
+        ->  Seq Scan on orders o  (cost=0.00..10234.00 rows=500000 width=16)
+                                  (actual time=0.023..102.341 rows=500000 loops=1)
+        ->  Hash  (cost=1098.43..1098.43 rows=10854 width=34)
+                  (actual time=11.234..11.234 rows=10854 loops=1)
+              ->  Index Scan using idx_city on customers c  (cost=0.56..1098.43 rows=10854)
+                    Index Cond: (city = 'Mumbai')
+
+-- Key fields to check:
+-- cost=X..Y: X=startup cost, Y=total cost (in cost units, not milliseconds)
+-- rows= ESTIMATED vs actual rows in ANALYZE output
+-- loops=: how many times this node ran
+-- Buffers: shared hit=pages from cache, read=pages from disk
+-- Large gap between estimated rows and actual rows = stale statistics; run ANALYZE</div>
+
+      <div class="note-box">
+        <strong>Most important EXPLAIN signal:</strong> A large discrepancy between estimated and
+        actual rows is the #1 cause of bad query plans. If estimated=100 but actual=500000, the
+        optimizer grossly underestimated and may have chosen a nested loop instead of a hash join.
+        Fix by running <code>ANALYZE table_name</code> to update statistics.
+      </div>
+
+      <h2>Query Plan Hints</h2>
+      <div class="code-block">-- PostgreSQL: disable specific plan methods (for debugging/forcing)
+SET enable_nestloop = OFF;    -- force hash or merge join
+SET enable_hashjoin = OFF;    -- force merge or nested loop
+SET enable_seqscan = OFF;     -- force index usage (if index exists and selectivity is high)
+
+-- MySQL: explicit hints
+SELECT /*+ INDEX(orders idx_order_date) */ * FROM orders WHERE order_date > '2024-01-01';
+SELECT /*+ NO_INDEX(orders) */ * FROM orders WHERE status = 'pending';
+
+-- PostgreSQL pg_hint_plan extension
+SELECT /*+ HashJoin(c o) SeqScan(o) */ c.name, SUM(o.total)
+FROM Customers c JOIN Orders o ON c.customer_id = o.customer_id
+GROUP BY c.name;</div>
+
+      <div class="tip-box">
+        <strong>Optimization hierarchy (most to least impactful):</strong>
+        <ol>
+          <li>Write the query correctly — avoid functions on indexed columns in WHERE, use SARGable predicates</li>
+          <li>Update statistics (ANALYZE)</li>
+          <li>Add missing indexes on join columns, filter columns</li>
+          <li>Rewrite the query (CTE vs subquery, EXISTS vs IN)</li>
+          <li>Adjust cost parameters only if hardware characteristics differ significantly</li>
+          <li>Use plan hints as last resort — they become maintenance debt</li>
+        </ol>
+      </div>
+
+      <h2>Summary</h2>
+      <ul>
+        <li>SQL queries go through: Parse → Bind → Logical Plan → Rewrite → Physical Plan → Execute</li>
+        <li>Parsing catches syntax errors; Binding catches semantic errors (bad column/table names)</li>
+        <li>Logical optimization: predicate pushdown, projection pushdown, subquery unnesting are rule-based</li>
+        <li>Physical optimization: cost-based — uses table statistics to choose access paths and join algorithms</li>
+        <li>EXPLAIN ANALYZE shows estimated vs actual row counts — mismatches indicate stale statistics</li>
+        <li>Run ANALYZE when data distribution changes significantly to keep the optimizer informed</li>
+      </ul>
+    </article>
+  </main>
+
+  <footer class="page-footer">
+    <p>Part of the DBMS Series — <a href="/articles.html">View all articles</a></p>
+  </footer>
+</body>
+</html>

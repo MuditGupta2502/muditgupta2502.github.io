@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>Database Views: Simple, Updatable, Materialized & Indexed Views | Mudit Gupta</title>
+  <meta name="description" content="Complete guide to database views: regular views, updatable views, WITH CHECK OPTION, materialized views, indexed views in SQL Server, refresh strategies, and real-world use patterns." />
+  <link rel="stylesheet" href="/assets/css/articles.css" />
+  <style>
+    .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
+    .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; color: #1a1a1a; }
+    .article-content h3 { margin-top: 1.5rem; margin-bottom: 0.75rem; color: #1a1a1a; }
+    .article-content p { margin-bottom: 1rem; color: #333; }
+    .article-content ul, .article-content ol { margin-left: 2rem; margin-bottom: 1rem; }
+    .article-content li { margin-bottom: 0.5rem; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; white-space: pre; margin-bottom: 1rem; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    table th, table td { border: 1px solid #ddd; padding: 0.75rem; text-align: left; }
+    table th { background: #f0f0f0; font-weight: 600; }
+    .note-box { background: #fff8e1; border-left: 4px solid #f9a825; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .tip-box { background: #e8f5e9; border-left: 4px solid #43a047; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a href="/" class="home-link">Mudit Gupta</a>
+      <div class="topbar-actions">
+        <a href="/articles.html" class="btn btn-outline">Articles</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <article class="article-content">
+      <p class="kicker">DBMS Series | Part 018</p>
+      <h1>Database Views: Simple, Updatable, Materialized &amp; Advanced Patterns</h1>
+      <p class="meta">SQL Design | 26 min read</p>
+
+      <p>
+        A view is a stored query that acts like a virtual table. Views are one of the most powerful
+        tools for schema abstraction, security, and simplification. But beyond the basics, views have
+        subtleties: when can you update through them? How do materialized views handle staleness?
+        This article explores all of it with real production use cases.
+      </p>
+
+      <h2>Regular Views (Virtual Tables)</h2>
+      <p>
+        A regular view stores a query definition, not data. Every time you query the view, the database
+        executes the underlying query. Views are transparent — the optimizer often pushes predicates
+        down into the view's underlying query.
+      </p>
+      <div class="code-block">-- Create a view for active customers with order history summary
+CREATE VIEW customer_order_summary AS
+SELECT
+  c.customer_id,
+  c.name,
+  c.email,
+  c.loyalty_tier,
+  COUNT(o.order_id)         AS total_orders,
+  COALESCE(SUM(o.total), 0) AS lifetime_value,
+  MAX(o.order_date)         AS last_order_date
+FROM Customers c
+LEFT JOIN Orders o ON c.customer_id = o.customer_id AND o.status != 'cancelled'
+GROUP BY c.customer_id, c.name, c.email, c.loyalty_tier;
+
+-- Query the view just like a table
+SELECT * FROM customer_order_summary WHERE loyalty_tier = 'gold' ORDER BY lifetime_value DESC;
+SELECT name, total_orders FROM customer_order_summary WHERE last_order_date > NOW() - INTERVAL '30 days';</div>
+
+      <h3>View Benefits</h3>
+      <ul>
+        <li><strong>Simplification:</strong> Complex joins, aggregations, and business logic are hidden behind a simple name</li>
+        <li><strong>Security &amp; access control:</strong> Grant access to a view without exposing the underlying tables — including sensitive columns</li>
+        <li><strong>Schema abstraction:</strong> The underlying table structure can change without breaking applications that query the view (as long as the view's output columns remain stable)</li>
+        <li><strong>Code reuse:</strong> Centralize query logic — fix a calculation in one place instead of in every query</li>
+      </ul>
+      <div class="code-block">-- Security example: expose only non-sensitive customer info to reporting tool
+CREATE VIEW public_customers AS
+SELECT customer_id, name, city, loyalty_tier
+FROM Customers;
+-- Email, phone, address never exposed to the reporting user
+
+-- Grant the view, not the table
+GRANT SELECT ON public_customers TO reporting_user;</div>
+
+      <h2>Updatable Views</h2>
+      <p>
+        A view is <strong>updatable</strong> if you can run INSERT, UPDATE, or DELETE on it and the
+        database can cleanly propagate that change to the underlying base table. This requires strict
+        conditions.
+      </p>
+      <h3>Conditions for Updatability (Standard SQL)</h3>
+      <ul>
+        <li>The view is based on a single base table (no joins)</li>
+        <li>No DISTINCT, GROUP BY, HAVING, or window functions in the view's query</li>
+        <li>No set operations (UNION, INTERSECT, EXCEPT)</li>
+        <li>No subqueries in the SELECT list</li>
+        <li>All NOT NULL base columns without defaults are included in the view</li>
+      </ul>
+      <div class="code-block">-- Simple updatable view
+CREATE VIEW active_products AS
+SELECT product_id, name, price, stock
+FROM Products
+WHERE is_active = TRUE;
+
+-- UPDATE through the view — propagates to Products table
+UPDATE active_products SET price = price * 1.05 WHERE category = 'Electronics';
+-- This works: single base table, no aggregation
+
+-- INSERT through the view (note: is_active defaults to TRUE for new rows)
+INSERT INTO active_products (name, price, stock) VALUES ('New Widget', 29.99, 100);
+
+-- DELETE through the view
+DELETE FROM active_products WHERE stock = 0;
+
+-- Non-updatable example (JOIN view)
+CREATE VIEW order_details AS
+SELECT o.order_id, c.name, o.total
+FROM Orders o JOIN Customers c ON o.customer_id = c.customer_id;
+-- UPDATE order_details SET total = 100 WHERE order_id = 1; → ERROR in most databases</div>
+
+      <h3>WITH CHECK OPTION</h3>
+      <p>
+        When you update rows through a view, the updated row might no longer satisfy the view's WHERE
+        condition and would "disappear" from the view after the update. <code>WITH CHECK OPTION</code>
+        prevents this by enforcing that all DML operations through the view must keep the row visible
+        in the view.
+      </p>
+      <div class="code-block">CREATE VIEW active_products AS
+SELECT product_id, name, price, stock, is_active
+FROM Products
+WHERE is_active = TRUE
+WITH CHECK OPTION;
+
+-- This UPDATE would move the row OUT of the view:
+UPDATE active_products SET is_active = FALSE WHERE product_id = 42;
+-- ERROR: new row violates check option for view "active_products"
+-- The row would fail the WHERE is_active = TRUE condition after the update
+
+-- Without WITH CHECK OPTION, the update would succeed silently and the product
+-- would disappear from the view — surprising and error-prone
+
+-- LOCAL vs CASCADED (for nested views)
+-- WITH LOCAL CHECK OPTION: only the immediate view's condition is checked
+-- WITH CASCADED CHECK OPTION (default): all nested view conditions are checked</div>
+
+      <h2>Stored Queries: Views vs CTEs</h2>
+      <table>
+        <tr><th>Feature</th><th>View</th><th>CTE (WITH clause)</th></tr>
+        <tr><td>Persistence</td><td>Stored in DB, survives sessions</td><td>Only within the current query</td></tr>
+        <tr><td>Reuse</td><td>Any query can use it</td><td>Only within the query that defines it</td></tr>
+        <tr><td>Optimization</td><td>Optimizer inlines or materializes</td><td>Often inlined; CTEs fence optimization in some DBs</td></tr>
+        <tr><td>Parameterizability</td><td>No (no parameters)</td><td>No (but columns can be computed)</td></tr>
+        <tr><td>Best for</td><td>Reusable, shared abstractions</td><td>One-off query organization within a complex query</td></tr>
+      </table>
+
+      <h2>Materialized Views</h2>
+      <p>
+        Unlike regular views, <strong>materialized views</strong> physically store the query results.
+        They're a form of controlled denormalization: precomputed, stored on disk, queryable with
+        indexes — but potentially stale until refreshed.
+      </p>
+      <div class="code-block">-- PostgreSQL materialized view
+CREATE MATERIALIZED VIEW daily_revenue_by_category AS
+SELECT
+  DATE_TRUNC('day', o.order_date) AS day,
+  p.category,
+  COUNT(o.order_id)               AS order_count,
+  SUM(oi.quantity * oi.unit_price) AS revenue
+FROM Orders o
+JOIN OrderItems oi ON o.order_id = oi.order_id
+JOIN Products p ON oi.product_id = p.product_id
+WHERE o.status = 'delivered'
+GROUP BY 1, 2;
+
+-- Create index on the materialized view
+CREATE INDEX ON daily_revenue_by_category(day, category);
+CREATE INDEX ON daily_revenue_by_category(day);
+
+-- Query it like a table — no computation at query time!
+SELECT * FROM daily_revenue_by_category WHERE day >= '2024-01-01' ORDER BY day, revenue DESC;</div>
+
+      <h3>Refresh Strategies</h3>
+      <div class="code-block">-- Manual refresh (blocks reads in PostgreSQL unless CONCURRENTLY)
+REFRESH MATERIALIZED VIEW daily_revenue_by_category;
+
+-- Non-blocking refresh (requires at least one UNIQUE index on the view)
+REFRESH MATERIALIZED VIEW CONCURRENTLY daily_revenue_by_category;
+-- CONCURRENTLY: builds a new version in background, swaps atomically — no read lock
+
+-- Scheduled refresh via cron job or pg_cron extension
+SELECT cron.schedule('refresh-revenue-mv', '0 * * * *',  -- every hour
+  'REFRESH MATERIALIZED VIEW CONCURRENTLY daily_revenue_by_category');
+
+-- CHECK if a materialized view is out of date
+SELECT schemaname, matviewname, ispopulated
+FROM pg_matviews
+WHERE matviewname = 'daily_revenue_by_category';</div>
+
+      <h3>Materialized Views in Other Databases</h3>
+      <div class="code-block">-- Oracle: supports fast (incremental) refresh via materialized view logs
+CREATE MATERIALIZED VIEW LOG ON Orders WITH ROWID, SEQUENCE (order_id, total);
+CREATE MATERIALIZED VIEW mv_order_summary
+  REFRESH FAST ON COMMIT  -- auto-refresh on each COMMIT
+AS SELECT customer_id, SUM(total) AS total FROM Orders GROUP BY customer_id;
+
+-- SQL Server: "Indexed Views" — automatically maintained as data changes
+CREATE VIEW v_order_totals WITH SCHEMABINDING AS
+SELECT customer_id, COUNT_BIG(*) AS cnt, SUM(total) AS total
+FROM dbo.Orders
+GROUP BY customer_id;
+CREATE UNIQUE CLUSTERED INDEX idx_v_order_totals ON v_order_totals (customer_id);
+-- SQL Server auto-maintains this index as rows are inserted/updated/deleted
+
+-- Snowflake / BigQuery: materialized views auto-incrementally refresh
+CREATE OR REPLACE MATERIALIZED VIEW mv_daily_sales AS
+SELECT DATE_TRUNC('day', created_at) AS day, SUM(amount) AS revenue
+FROM sales GROUP BY 1;</div>
+
+      <h2>Views for Row-Level Security</h2>
+      <p>
+        Before row-level security (RLS) policies were commonplace, views were the standard way to
+        restrict which rows different users could see.
+      </p>
+      <div class="code-block">-- View that limits data access to the user's own region (multi-tenant)
+CREATE VIEW my_region_customers AS
+SELECT * FROM Customers
+WHERE region = current_setting('app.user_region');
+-- current_setting() reads a PostgreSQL session variable set at login
+
+-- Set the session variable when a user connects
+SET app.user_region = 'APAC';
+SELECT * FROM my_region_customers;  -- only APAC customers visible
+
+-- Modern approach: PostgreSQL Row-Level Security (RLS) policies
+ALTER TABLE Customers ENABLE ROW LEVEL SECURITY;
+CREATE POLICY region_isolation ON Customers
+  USING (region = current_setting('app.user_region'));</div>
+
+      <h2>View Dependency and Schema Management</h2>
+      <div class="code-block">-- List all views that depend on a table
+SELECT viewname, definition
+FROM pg_views
+WHERE definition ILIKE '%customers%';
+
+-- Dropping a view
+DROP VIEW customer_order_summary;
+DROP VIEW IF EXISTS customer_order_summary;
+DROP VIEW customer_order_summary CASCADE;  -- also drops dependent views
+
+-- Replacing a view (preserves grants)
+CREATE OR REPLACE VIEW customer_order_summary AS
+SELECT ... (new query);
+-- PostgreSQL: can only change SELECT list, not restructure; use DROP+CREATE for structural changes
+
+-- Check view dependencies before altering a base table
+-- If you remove a column from Customers that customer_order_summary uses → view breaks
+-- Views become INVALID and produce errors on next query</div>
+
+      <h2>Common View Patterns in Production</h2>
+      <table>
+        <tr><th>Pattern</th><th>View Type</th><th>Example</th></tr>
+        <tr><td>Security curtain</td><td>Regular view</td><td>public_users excludes password_hash, SSN</td></tr>
+        <tr><td>Business logic abstraction</td><td>Regular view</td><td>active_subscriptions filters by status and expiry</td></tr>
+        <tr><td>Reporting denormalization</td><td>Materialized view</td><td>monthly_revenue pre-joins 5 tables, refreshed nightly</td></tr>
+        <tr><td>Historical snapshot</td><td>Materialized view</td><td>end_of_month_balances captures account balances monthly</td></tr>
+        <tr><td>Cross-schema bridge</td><td>Regular view</td><td>View in schema A that joins tables from schemas A and B</td></tr>
+      </table>
+
+      <div class="tip-box">
+        <strong>When to use each view type:</strong>
+        <ul>
+          <li>Use regular views for security, abstraction, and code reuse — they're free (no storage)</li>
+          <li>Use materialized views when the underlying query is costly (joins multiple large tables, complex aggregations) and results can tolerate some staleness</li>
+          <li>Refresh materialized views based on acceptable staleness: nightly for reports, hourly for dashboards, on-commit for critical counts</li>
+        </ul>
+      </div>
+
+      <h2>Summary</h2>
+      <ul>
+        <li><strong>Regular view:</strong> Stored query — virtual table, reexecuted on every query, no storage cost</li>
+        <li><strong>Updatable view:</strong> Single-table, no aggregation/DISTINCT → INSERT/UPDATE/DELETE propagate to base table</li>
+        <li><strong>WITH CHECK OPTION:</strong> Prevents DML that would remove the row from the view's visible set</li>
+        <li><strong>Materialized view:</strong> Stored query results — faster reads, potential staleness, requires explicit (or automatic) refresh</li>
+        <li>Views provide security, abstraction, and denormalization depending on type and usage</li>
+      </ul>
+    </article>
+  </main>
+
+  <footer class="page-footer">
+    <p>Part of the DBMS Series — <a href="/articles.html">View all articles</a></p>
+  </footer>
+</body>
+</html>

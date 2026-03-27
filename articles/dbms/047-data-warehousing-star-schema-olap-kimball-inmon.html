@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>Data Warehousing: Star Schema, Snowflake, OLAP, Kimball and Inmon | Mudit Gupta</title>
+  <meta name="description" content="Data warehousing fundamentals: fact and dimension tables, star vs snowflake schemas, OLAP operations, Kimball vs Inmon modeling, and modern warehouse tools." />
+  <link rel="stylesheet" href="/assets/css/articles.css" />
+  <style>
+    .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
+    .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; color: #1a1a1a; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; white-space: pre; margin-bottom: 1rem; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    table th, table td { border: 1px solid #ddd; padding: 0.75rem; text-align: left; }
+    table th { background: #f0f0f0; }
+    .tip-box { background: #e8f5e9; border-left: 4px solid #43a047; padding: 0.75rem 1rem; margin: 1rem 0; }
+  </style>
+</head>
+<body>
+<header class="topbar"><div class="topbar-inner"><a href="/" class="home-link">Mudit Gupta</a><div class="topbar-actions"><a href="/articles.html" class="btn btn-outline">Articles</a></div></div></header>
+<main>
+<article class="article-content">
+<p class="kicker">DBMS Series | Part 047</p>
+<h1>Data Warehousing: Star Schema, Snowflake, OLAP, Kimball and Inmon</h1>
+<p class="meta">Analytics | 20 min read</p>
+
+<p>Operational databases (OLTP) are optimized for frequent small transactions. Analytical workloads (OLAP) need large scans and aggregations over historical data. A data warehouse is designed for this second category.</p>
+
+<h2>Fact and Dimension Tables</h2>
+<div class="code-block">-- Fact table: measurable events (sales, clicks, payments)
+-- Dimension table: descriptive context (customer, product, date, region)
+
+CREATE TABLE fact_sales (
+  date_key INT,
+  product_key INT,
+  customer_key INT,
+  store_key INT,
+  quantity INT,
+  revenue NUMERIC(12,2),
+  discount NUMERIC(12,2)
+);
+
+CREATE TABLE dim_product (
+  product_key INT PRIMARY KEY,
+  sku TEXT,
+  product_name TEXT,
+  category TEXT,
+  brand TEXT
+);
+
+CREATE TABLE dim_date (
+  date_key INT PRIMARY KEY,
+  full_date DATE,
+  day_name TEXT,
+  month INT,
+  quarter INT,
+  year INT
+);</div>
+
+<h2>Star vs Snowflake</h2>
+<table>
+  <tr><th>Model</th><th>Design</th><th>Pros</th><th>Cons</th></tr>
+  <tr><td>Star</td><td>Denormalized dimensions</td><td>Fast joins, easy BI queries</td><td>Some redundancy</td></tr>
+  <tr><td>Snowflake</td><td>Normalized dimensions</td><td>Less redundancy</td><td>More joins, more complexity</td></tr>
+</table>
+
+<h2>OLAP Operations</h2>
+<div class="code-block">-- Roll-up: aggregate to higher level
+SELECT d.year, p.category, SUM(f.revenue)
+FROM fact_sales f
+JOIN dim_date d ON f.date_key = d.date_key
+JOIN dim_product p ON f.product_key = p.product_key
+GROUP BY d.year, p.category;
+
+-- Drill-down: move from year -> month -> day
+-- Slice: filter one dimension (e.g., year=2024)
+-- Dice: filter multiple dimensions (year=2024, category='Electronics')</div>
+
+<h2>Kimball vs Inmon</h2>
+<table>
+  <tr><th>Approach</th><th>Direction</th><th>Strength</th></tr>
+  <tr><td>Kimball</td><td>Bottom-up (data marts first)</td><td>Fast business value, practical for product teams</td></tr>
+  <tr><td>Inmon</td><td>Top-down (enterprise DW first)</td><td>Strong enterprise consistency/governance</td></tr>
+</table>
+
+<h2>Modern Warehouse Stack</h2>
+<div class="code-block">-- Typical pipeline:
+-- Source DB -> CDC/ETL -> staging -> warehouse model -> BI dashboards
+
+-- Popular tools:
+-- Storage/compute: Snowflake, BigQuery, Redshift
+-- Transform: dbt
+-- Ingestion: Fivetran, Airbyte, custom CDC
+-- BI: Power BI, Tableau, Looker</div>
+
+<div class="tip-box"><strong>Practical rule:</strong> Start with star schema + Kimball-style marts for quick delivery. Introduce stricter enterprise modeling later when governance and cross-domain consistency become bottlenecks.</div>
+
+<h2>Summary</h2>
+<ul>
+  <li>Warehouses are built for analytical scans and aggregations, not transactional writes.</li>
+  <li>Fact tables hold events; dimensions provide context.</li>
+  <li>Star schema is usually the best first choice for analytics speed and simplicity.</li>
+  <li>Kimball gives faster iterative delivery; Inmon gives stronger enterprise consistency.</li>
+</ul>
+</article>
+</main>
+<footer class="page-footer"><p>Part of the DBMS Series — <a href="/articles.html">View all articles</a></p></footer>
+</body>
+</html>

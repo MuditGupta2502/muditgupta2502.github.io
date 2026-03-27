@@ -1,0 +1,359 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>SQL Subqueries Deep Dive: Scalar, Correlated, EXISTS & Lateral | Mudit Gupta</title>
+  <meta name="description" content="Master SQL subqueries: scalar, column, table subqueries, correlated subqueries, EXISTS/NOT EXISTS, WITH (CTEs) including recursive CTEs — with real-world examples and performance trade-offs." />
+  <link rel="stylesheet" href="/assets/css/articles.css" />
+  <style>
+    .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
+    .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; color: #1a1a1a; }
+    .article-content h3 { margin-top: 1.5rem; margin-bottom: 0.75rem; color: #1a1a1a; }
+    .article-content p { margin-bottom: 1rem; color: #333; }
+    .article-content ul, .article-content ol { margin-left: 2rem; margin-bottom: 1rem; }
+    .article-content li { margin-bottom: 0.5rem; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; white-space: pre; margin-bottom: 1rem; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    table th, table td { border: 1px solid #ddd; padding: 0.75rem; text-align: left; }
+    table th { background: #f0f0f0; font-weight: 600; }
+    .note-box { background: #fff8e1; border-left: 4px solid #f9a825; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .tip-box { background: #e8f5e9; border-left: 4px solid #43a047; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a href="/" class="home-link">Mudit Gupta</a>
+      <div class="topbar-actions">
+        <a href="/articles.html" class="btn btn-outline">Articles</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <article class="article-content">
+      <p class="kicker">DBMS Series | Part 019</p>
+      <h1>SQL Subqueries Deep Dive: Scalar, Correlated, EXISTS &amp; CTEs</h1>
+      <p class="meta">SQL Advanced | 28 min read</p>
+
+      <p>
+        Subqueries are queries nested within another query. They're one of the most expressive SQL
+        features — enabling you to filter by aggregated results, compare rows to their peers, check
+        for existence, and build complex multi-step data pipelines. This article covers every subquery
+        type with practical examples and explains when to use a subquery vs a join vs a CTE.
+      </p>
+
+      <h2>Classification of Subqueries</h2>
+      <table>
+        <tr><th>Category</th><th>Location in Query</th><th>Returns</th></tr>
+        <tr><td>Scalar subquery</td><td>SELECT list or WHERE comparing with =, &lt;, &gt;</td><td>Exactly one row, one column</td></tr>
+        <tr><td>Column subquery</td><td>WHERE col IN (...) or WHERE col = ANY(...)</td><td>One column, multiple rows</td></tr>
+        <tr><td>Table/Row subquery</td><td>FROM clause (derived table)</td><td>Full result set used as a table</td></tr>
+        <tr><td>Correlated subquery</td><td>WHERE or HAVING; references outer query</td><td>Evaluated once per outer row</td></tr>
+        <tr><td>EXISTS subquery</td><td>WHERE EXISTS / NOT EXISTS</td><td>Boolean (row found or not)</td></tr>
+      </table>
+
+      <h2>Scalar Subqueries</h2>
+      <p>
+        A scalar subquery returns exactly one value (one row, one column). It can be used anywhere
+        a single value is expected: in the SELECT list, in WHERE, or in CASE.
+      </p>
+      <div class="code-block">-- SELECT list: show each customer's total alongside the grand average
+SELECT
+  customer_id,
+  name,
+  (SELECT SUM(total) FROM Orders o WHERE o.customer_id = c.customer_id) AS my_total,
+  (SELECT AVG(total) FROM Orders) AS avg_order  -- same value for all rows (non-correlated)
+FROM Customers c;
+
+-- WHERE clause: products priced above the category average
+SELECT product_id, name, price, category
+FROM Products p
+WHERE price > (
+  SELECT AVG(price)
+  FROM Products
+  WHERE category = p.category  -- correlated: references outer p.category
+);
+
+-- CASE with scalar subquery
+SELECT
+  order_id,
+  total,
+  CASE WHEN total > (SELECT PERCENTILE_CONT(0.9) WITHIN GROUP (ORDER BY total) FROM Orders)
+       THEN 'high-value'
+       ELSE 'standard'
+  END AS order_tier
+FROM Orders;</div>
+
+      <div class="note-box">
+        <strong>Scalar subquery contract:</strong> If a scalar subquery returns more than one row,
+        it raises a runtime error. If it returns zero rows, it returns NULL. Design with these in mind.
+      </div>
+
+      <h2>Column Subqueries: IN and ANY/ALL</h2>
+      <div class="code-block">-- IN: matches any value in the list
+SELECT name, email
+FROM Customers
+WHERE customer_id IN (
+  SELECT DISTINCT customer_id
+  FROM Orders
+  WHERE order_date >= CURRENT_DATE - INTERVAL '30 days'
+);
+
+-- NOT IN (careful with NULLs!)
+SELECT name FROM Products
+WHERE product_id NOT IN (
+  SELECT product_id FROM OrderItems  -- if ANY product_id is NULL here, whole result is empty!
+);
+
+-- Safer: NOT EXISTS handles NULLs correctly
+SELECT name FROM Products p
+WHERE NOT EXISTS (
+  SELECT 1 FROM OrderItems oi WHERE oi.product_id = p.product_id
+);
+
+-- ANY: at least one value matches
+SELECT name, price FROM Products
+WHERE price > ANY (SELECT price FROM Products WHERE category = 'Budget');
+-- Equivalent to: price > MIN(budget category prices)
+
+-- ALL: must be greater than every value
+SELECT name, price FROM Products
+WHERE price > ALL (SELECT price FROM Products WHERE category = 'Budget');
+-- Equivalent to: price > MAX(budget category prices)</div>
+
+      <h2>Derived Tables (FROM Subqueries)</h2>
+      <p>
+        A subquery in the <code>FROM</code> clause creates a temporary result set, called a
+        <strong>derived table</strong>. It must be given an alias.
+      </p>
+      <div class="code-block">-- Average revenue per customer segment
+SELECT
+  segment_data.loyalty_tier,
+  AVG(segment_data.customer_revenue) AS avg_revenue_per_customer
+FROM (
+  SELECT c.loyalty_tier, SUM(o.total) AS customer_revenue
+  FROM Customers c
+  JOIN Orders o ON c.customer_id = o.customer_id
+  GROUP BY c.customer_id, c.loyalty_tier
+) AS segment_data
+GROUP BY segment_data.loyalty_tier;
+
+-- Top 5 products by revenue in each category
+SELECT *
+FROM (
+  SELECT
+    product_id, name, category,
+    SUM(oi.quantity * oi.unit_price) AS revenue,
+    RANK() OVER (PARTITION BY category ORDER BY SUM(oi.quantity * oi.unit_price) DESC) AS rnk
+  FROM Products p JOIN OrderItems oi USING(product_id)
+  GROUP BY product_id, name, category
+) ranked
+WHERE rnk <= 5;</div>
+
+      <h2>Correlated Subqueries</h2>
+      <p>
+        A correlated subquery references columns from the outer query. It is evaluated once for each
+        row processed by the outer query — making it potentially O(n) or O(n²) in complexity.
+        Use them carefully on large tables; a JOIN or window function is often faster.
+      </p>
+      <div class="code-block">-- Find each employee's salary compared to department average
+SELECT
+  e.employee_id,
+  e.name,
+  e.salary,
+  e.department,
+  (SELECT AVG(e2.salary) FROM Employees e2 WHERE e2.department = e.department) AS dept_avg
+FROM Employees e;
+-- Correlated: inner query references e.department from outer query
+-- Runs once per employee row → potentially slow on large tables
+
+-- Better alternative: window function (runs in one pass)
+SELECT
+  employee_id,
+  name,
+  salary,
+  department,
+  AVG(salary) OVER (PARTITION BY department) AS dept_avg
+FROM Employees;
+
+-- Correlated UPDATE: update each customer's last_order_date
+UPDATE Customers c
+SET last_order_date = (
+  SELECT MAX(order_date)
+  FROM Orders o
+  WHERE o.customer_id = c.customer_id
+);
+-- This is fine for a one-time fix; for frequent updates use triggers or denormalization</div>
+
+      <h2>EXISTS and NOT EXISTS</h2>
+      <p>
+        <code>EXISTS</code> returns TRUE if the subquery returns at least one row; FALSE otherwise.
+        It's a semi-join: it stops at the first match (short-circuits). Unlike IN, it handles NULLs
+        correctly and doesn't care about the subquery's column values — just row existence.
+      </p>
+      <div class="code-block">-- Customers who have made at least one order (semi-join)
+SELECT c.customer_id, c.name
+FROM Customers c
+WHERE EXISTS (
+  SELECT 1 FROM Orders o WHERE o.customer_id = c.customer_id
+);
+-- SELECT 1: we don't care about values, just existence — SELECT * would also work
+-- The subquery short-circuits at the first matching order
+
+-- Customers who have placed an order in EVERY product category
+-- (using NOT EXISTS double negation — equivalent to relational algebra division)
+SELECT c.customer_id, c.name
+FROM Customers c
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM Products p
+  WHERE NOT EXISTS (
+    SELECT 1
+    FROM Orders o
+    JOIN OrderItems oi ON o.order_id = oi.order_id
+    WHERE o.customer_id = c.customer_id AND oi.product_id = p.product_id
+  )
+);
+-- Read: there is no product for which this customer does NOT have an order
+
+-- EXISTS in WITH CHECK OPTION enforcement (automatically handled by DB)
+-- EXISTS for duplicate prevention
+SELECT p.name
+FROM Products p
+WHERE EXISTS (
+  SELECT 1 FROM OrderItems oi WHERE oi.product_id = p.product_id
+  AND EXISTS (SELECT 1 FROM Orders o WHERE o.order_id = oi.order_id AND o.status = 'cancelled')
+);</div>
+
+      <h2>Common Table Expressions (CTEs)</h2>
+      <p>
+        A CTE defines a named result set at the top of a query using <code>WITH</code>. It can be
+        referenced multiple times in the main query. CTEs improve readability and organization without
+        creating database objects.
+      </p>
+      <div class="code-block">-- CTE: customer revenue ranking
+WITH customer_revenue AS (
+  SELECT customer_id, SUM(total) AS total_revenue
+  FROM Orders
+  WHERE status = 'delivered'
+  GROUP BY customer_id
+),
+revenue_ranked AS (
+  SELECT
+    customer_id,
+    total_revenue,
+    RANK() OVER (ORDER BY total_revenue DESC) AS revenue_rank
+  FROM customer_revenue
+)
+SELECT c.name, c.email, rr.total_revenue, rr.revenue_rank
+FROM Customers c
+JOIN revenue_ranked rr USING(customer_id)
+WHERE rr.revenue_rank <= 10;  -- Top 10 customers by revenue
+
+-- Multiple CTEs (separated by commas)
+WITH
+  active_products AS (
+    SELECT product_id, name, price FROM Products WHERE is_active = TRUE
+  ),
+  recent_sales AS (
+    SELECT product_id, SUM(quantity) AS units_sold
+    FROM OrderItems oi
+    JOIN Orders o USING(order_id)
+    WHERE o.order_date >= NOW() - INTERVAL '90 days'
+    GROUP BY product_id
+  )
+SELECT ap.name, ap.price, COALESCE(rs.units_sold, 0) AS recent_units
+FROM active_products ap
+LEFT JOIN recent_sales rs USING(product_id)
+ORDER BY recent_units DESC;</div>
+
+      <h2>Recursive CTEs</h2>
+      <p>
+        Recursive CTEs traverse hierarchical structures like org charts, folder trees, category
+        hierarchies, or graph-like BOM (bill of materials) relationships. They have two parts:
+        the base case (anchor) and the recursive step.
+      </p>
+      <div class="code-block">-- Org chart: find all reports under a given manager (any depth)
+WITH RECURSIVE org_hierarchy AS (
+  -- Anchor: start with the target manager
+  SELECT employee_id, name, manager_id, 1 AS depth
+  FROM Employees
+  WHERE employee_id = 5  -- CEO or target manager's ID
+
+  UNION ALL
+
+  -- Recursive step: find direct reports of employees already in result
+  SELECT e.employee_id, e.name, e.manager_id, oh.depth + 1
+  FROM Employees e
+  INNER JOIN org_hierarchy oh ON e.manager_id = oh.employee_id
+)
+SELECT employee_id, name, depth
+FROM org_hierarchy
+ORDER BY depth, name;
+
+-- Category path: get full breadcrumb path for each category
+WITH RECURSIVE category_path AS (
+  -- Anchor: top-level categories (no parent)
+  SELECT category_id, name, parent_id,
+         name::TEXT AS full_path
+  FROM Categories WHERE parent_id IS NULL
+
+  UNION ALL
+
+  SELECT c.category_id, c.name, c.parent_id,
+         cp.full_path || ' > ' || c.name
+  FROM Categories c
+  JOIN category_path cp ON c.parent_id = cp.category_id
+)
+SELECT * FROM category_path ORDER BY full_path;
+-- Results: "Electronics", "Electronics > Computers", "Electronics > Computers > Laptops"
+
+-- Safety: always add a depth limit to prevent infinite loops from bad data
+WITH RECURSIVE tree AS (
+  SELECT id, parent_id, 0 AS depth FROM nodes WHERE parent_id IS NULL
+  UNION ALL
+  SELECT n.id, n.parent_id, t.depth + 1
+  FROM nodes n JOIN tree t ON n.parent_id = t.id
+  WHERE t.depth < 20  -- max depth guard
+) SELECT * FROM tree;</div>
+
+      <div class="note-box">
+        <strong>CTE materialization:</strong> In PostgreSQL 12+, CTEs are inlined by default (the
+        optimizer can push predicates down). In PostgreSQL &lt;12 and when declared with
+        <code>WITH ... AS MATERIALIZED</code>, the CTE is evaluated once and cached. Use
+        <code>AS MATERIALIZED</code> when you reference the CTE multiple times or want to prevent
+        re-evaluation.
+      </div>
+
+      <h2>Subquery vs JOIN vs CTE: When to Use Each</h2>
+      <table>
+        <tr><th>Use Case</th><th>Best Choice</th><th>Why</th></tr>
+        <tr><td>Filter by existence</td><td>EXISTS subquery</td><td>Short-circuits, handles NULLs</td></tr>
+        <tr><td>Combine rows from two tables</td><td>JOIN</td><td>Set-based, optimizer-friendly</td></tr>
+        <tr><td>Complex multi-step query</td><td>CTE</td><td>Readable, referenceable multiple times</td></tr>
+        <tr><td>Hierarchical traversal</td><td>Recursive CTE</td><td>Only clean solution for unbounded depth</td></tr>
+        <tr><td>Compare row to its group aggregate</td><td>Window function</td><td>Single pass, far faster than correlated subquery</td></tr>
+        <tr><td>Top-N per group</td><td>Window function or LATERAL</td><td>Efficient; correlated subquery is O(n²)</td></tr>
+      </table>
+
+      <h2>Summary</h2>
+      <ul>
+        <li><strong>Scalar subquery:</strong> Returns one value — usable in SELECT list, WHERE, CASE</li>
+        <li><strong>IN / ANY / ALL:</strong> Column comparisons — use NOT EXISTS instead of NOT IN to avoid NULL traps</li>
+        <li><strong>Derived tables:</strong> FROM subquery — useful for pre-aggregating before joining</li>
+        <li><strong>Correlated subquery:</strong> References outer row — powerful but can be O(n) per row; prefer window functions</li>
+        <li><strong>EXISTS:</strong> Semi-join pattern — short-circuits, NULL-safe, best for existence checks</li>
+        <li><strong>CTE:</strong> Named temporary result set — improves readability, reusable in query</li>
+        <li><strong>Recursive CTE:</strong> Hierarchical traversal — org charts, trees, paths — add depth limit as guard</li>
+      </ul>
+    </article>
+  </main>
+
+  <footer class="page-footer">
+    <p>Part of the DBMS Series — <a href="/articles.html">View all articles</a></p>
+  </footer>
+</body>
+</html>

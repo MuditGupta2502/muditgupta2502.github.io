@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta http-equiv="X-UA-Compatible" content="IE=edge" />
+<title>Multi-Tenant Database Design Patterns | Mudit Gupta</title>
+<meta name="description" content="Multi-tenant DB design options: shared schema, separate schema, separate database, tenant isolation, and migration strategy at scale." />
+<link rel="stylesheet" href="/assets/css/articles.css" />
+<style>.article-content{max-width:800px;margin:0 auto;line-height:1.8}.code-block{background:#f5f5f5;padding:1rem;border-radius:4px;white-space:pre;overflow-x:auto;font-family:monospace}table{border-collapse:collapse;width:100%}th,td{border:1px solid #ddd;padding:.75rem}</style>
+</head><body>
+<header class="topbar"><div class="topbar-inner"><a href="/" class="home-link">Mudit Gupta</a><div class="topbar-actions"><a href="/articles.html" class="btn btn-outline">Articles</a></div></div></header>
+<main><article class="article-content">
+<p class="kicker">DBMS Series | Part 050</p><h1>Multi-Tenant Database Design Patterns</h1><p class="meta">Architecture | 18 min read</p>
+<p>SaaS systems often support thousands of tenants with different usage patterns. The main design choice is where to place tenant boundaries.</p>
+<h2>Tenant Isolation Models</h2>
+<table>
+<tr><th>Model</th><th>Isolation</th><th>Cost</th><th>Ops Complexity</th></tr>
+<tr><td>Shared DB, shared schema</td><td>Low</td><td>Lowest</td><td>Low</td></tr>
+<tr><td>Shared DB, separate schema</td><td>Medium</td><td>Medium</td><td>Medium</td></tr>
+<tr><td>Separate DB per tenant</td><td>High</td><td>Highest</td><td>High</td></tr>
+</table>
+<h2>Shared Schema Pattern</h2>
+<div class="code-block">CREATE TABLE invoices (
+  id BIGSERIAL PRIMARY KEY,
+  tenant_id BIGINT NOT NULL,
+  amount NUMERIC(12,2) NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_invoices_tenant_created ON invoices (tenant_id, created_at DESC);
+
+-- Enforce isolation with RLS
+ALTER TABLE invoices ENABLE ROW LEVEL SECURITY;
+CREATE POLICY tenant_isolation ON invoices
+USING (tenant_id = current_setting('app.tenant_id')::BIGINT);</div>
+<h2>Migration Path</h2>
+<div class="code-block">-- Common journey:
+-- Stage 1: shared schema for MVP
+-- Stage 2: move noisy tenants to dedicated shards
+-- Stage 3: enterprise tenants get dedicated databases
+-- Keep an internal tenant-routing table to map tenant -> cluster/database</div>
+<h2>Summary</h2><ul>
+<li>Start with shared schema for speed, but design with tenant_id everywhere from day one.</li>
+<li>Use RLS + composite indexes by tenant for performance and safety.</li>
+<li>Support progressive isolation for large enterprise tenants later.</li>
+</ul></article></main>
+<footer class="page-footer"><p>Part of the DBMS Series — <a href="/articles.html">View all articles</a></p></footer>
+</body></html>

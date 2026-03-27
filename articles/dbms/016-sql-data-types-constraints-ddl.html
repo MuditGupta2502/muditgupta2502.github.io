@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>SQL Data Types, Constraints & DDL In Depth | Mudit Gupta</title>
+  <meta name="description" content="Complete guide to SQL data types (numeric, string, date, JSON, UUID), all constraint types (PK, FK, UNIQUE, CHECK, NOT NULL, DEFAULT), and DDL operations with real-world schema design patterns." />
+  <link rel="stylesheet" href="/assets/css/articles.css" />
+  <style>
+    .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
+    .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; color: #1a1a1a; }
+    .article-content h3 { margin-top: 1.5rem; margin-bottom: 0.75rem; color: #1a1a1a; }
+    .article-content p { margin-bottom: 1rem; color: #333; }
+    .article-content ul, .article-content ol { margin-left: 2rem; margin-bottom: 1rem; }
+    .article-content li { margin-bottom: 0.5rem; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; white-space: pre; margin-bottom: 1rem; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    table th, table td { border: 1px solid #ddd; padding: 0.75rem; text-align: left; }
+    table th { background: #f0f0f0; font-weight: 600; }
+    .note-box { background: #fff8e1; border-left: 4px solid #f9a825; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .tip-box { background: #e8f5e9; border-left: 4px solid #43a047; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a href="/" class="home-link">Mudit Gupta</a>
+      <div class="topbar-actions">
+        <a href="/articles.html" class="btn btn-outline">Articles</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <article class="article-content">
+      <p class="kicker">DBMS Series | Part 016</p>
+      <h1>SQL Data Types, Constraints &amp; DDL In Depth</h1>
+      <p class="meta">SQL Fundamentals | 25 min read</p>
+
+      <p>
+        Choosing the right data type and constraint for each column is one of the most impactful
+        design decisions in database engineering. The wrong types mean wasted storage, slow queries,
+        and subtle bugs. Missing constraints mean corrupted data. This article goes deep on every
+        major SQL data type category and every constraint type, with real-world examples showing
+        why each choice matters.
+      </p>
+
+      <h2>Numeric Types</h2>
+      <table>
+        <tr><th>Type</th><th>Storage</th><th>Range</th><th>Use When</th></tr>
+        <tr><td>TINYINT</td><td>1 byte</td><td>-128 to 127 (or 0 to 255 UNSIGNED)</td><td>Flags, statuses, small counts</td></tr>
+        <tr><td>SMALLINT</td><td>2 bytes</td><td>-32,768 to 32,767</td><td>Age, small dimension counts</td></tr>
+        <tr><td>INT / INTEGER</td><td>4 bytes</td><td>-2.1B to 2.1B</td><td>General-purpose IDs, quantities</td></tr>
+        <tr><td>BIGINT</td><td>8 bytes</td><td>-9.2 × 10¹⁸ to 9.2 × 10¹⁸</td><td>Large IDs, timestamp ms, financial totals</td></tr>
+        <tr><td>DECIMAL(p,s)</td><td>Variable</td><td>Exact, up to p digits total, s after decimal</td><td>Money, prices — never use FLOAT for money!</td></tr>
+        <tr><td>FLOAT / REAL</td><td>4 bytes</td><td>Approx ±3.4 × 10³⁸</td><td>Scientific data, GPS coords (acceptable imprecision)</td></tr>
+        <tr><td>DOUBLE PRECISION</td><td>8 bytes</td><td>Approx ±1.8 × 10³⁰⁸</td><td>Higher-precision floating point</td></tr>
+      </table>
+      <div class="note-box">
+        <strong>Critical:</strong> Never use FLOAT or DOUBLE for monetary values. Floating-point arithmetic
+        has rounding errors: <code>0.1 + 0.2 = 0.30000000000000004</code> in IEEE 754. Use
+        <code>DECIMAL(10,2)</code> for prices. E.g. <code>price DECIMAL(10,2) NOT NULL CHECK(price >= 0)</code>.
+      </div>
+
+      <h3>Sequences and Auto-Increment</h3>
+      <div class="code-block">-- MySQL / MariaDB
+CREATE TABLE Orders (
+  order_id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  ...
+);
+
+-- PostgreSQL: SERIAL (creates an implicit sequence) or BIGSERIAL
+CREATE TABLE Orders (
+  order_id BIGSERIAL PRIMARY KEY,  -- equivalent to BIGINT DEFAULT nextval(...)
+  ...
+);
+
+-- PostgreSQL IDENTITY (ANSI standard, preferred over SERIAL)
+CREATE TABLE Orders (
+  order_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  ...
+);
+
+-- When to use BIGINT not INT for PKs:
+-- If table can exceed 2 billion rows, or IDs are generated from sharding/distributed systems</div>
+
+      <h2>String Types</h2>
+      <table>
+        <tr><th>Type</th><th>Storage</th><th>Use When</th></tr>
+        <tr><td>CHAR(n)</td><td>Exactly n bytes (padded)</td><td>Fixed-length codes: country codes (CHAR(2)), status flags (CHAR(1))</td></tr>
+        <tr><td>VARCHAR(n)</td><td>Actual length + 1-2 bytes</td><td>Variable-length strings up to n: names, emails, addresses</td></tr>
+        <tr><td>TEXT</td><td>Up to 65,535 bytes</td><td>Long user-generated text: descriptions, comments, blog posts</td></tr>
+        <tr><td>MEDIUMTEXT</td><td>Up to 16 MB</td><td>HTML content, large documents</td></tr>
+        <tr><td>LONGTEXT / TEXT (PG)</td><td>Up to 4 GB</td><td>Very large content (PostgreSQL TEXT is unlimited)</td></tr>
+      </table>
+      <div class="code-block">-- Good practice
+email      VARCHAR(254) NOT NULL,    -- 254 is RFC 5321 max email length
+country_code CHAR(2) NOT NULL,       -- ISO 3166-1 alpha-2: always exactly 2 chars
+product_name VARCHAR(255) NOT NULL,
+description TEXT,
+
+-- PostgreSQL has no VARCHAR length limit effectively
+-- MySQL: TEXT columns cannot have DEFAULT values or be fully indexed
+-- Use VARCHAR over TEXT where you need indexing or defaulting</div>
+
+      <h3>Character Set and Collation</h3>
+      <div class="code-block">-- MySQL: Always use utf8mb4, not utf8 (which MySQL calls utf8 but is actually limited UTF-8)
+CREATE TABLE Users (
+  username VARCHAR(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL
+);
+-- utf8mb4 supports full Unicode including emoji (4-byte sequences)
+-- utf8mb4_unicode_ci: case-insensitive, Unicode-aware collation
+
+-- PostgreSQL uses UTF-8 by default; use ICU collations for locale awareness
+CREATE TABLE Users (
+  username TEXT COLLATE "en-US-x-icu" NOT NULL
+);</div>
+
+      <h2>Date and Time Types</h2>
+      <table>
+        <tr><th>Type</th><th>Range / Precision</th><th>Use When</th></tr>
+        <tr><td>DATE</td><td>YYYY-MM-DD</td><td>Birthdays, event dates — no time component</td></tr>
+        <tr><td>TIME</td><td>HH:MM:SS.fraction</td><td>Daily schedule times — no date</td></tr>
+        <tr><td>DATETIME</td><td>No timezone, exact value stored</td><td>Local events, application timestamps without zone</td></tr>
+        <tr><td>TIMESTAMP</td><td>Stores in UTC internally, auto-converts to session timezone</td><td>When records were created/modified — use TIMESTAMP</td></tr>
+        <tr><td>TIMESTAMPTZ (PG)</td><td>TIMESTAMP WITH TIME ZONE — full timezone awareness</td><td>Best practice for all timestamps in PG</td></tr>
+        <tr><td>INTERVAL</td><td>Periods: '2 days', '3 months 1 hour'</td><td>Duration, computing future dates</td></tr>
+      </table>
+      <div class="code-block">-- Best practice: always store timestamps with timezone context
+-- PostgreSQL
+created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+-- MySQL: DATETIME vs TIMESTAMP
+-- TIMESTAMP: stored as UTC, auto-updates if using DEFAULT CURRENT_TIMESTAMP ON UPDATE
+-- DATETIME: no timezone conversion, stores exact value (prefer for historical records)
+created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+-- Calculating with dates
+SELECT order_date + INTERVAL '7 days' AS delivery_deadline FROM Orders;
+SELECT AGE(NOW(), birth_date) AS customer_age FROM Customers;  -- PostgreSQL</div>
+
+      <h2>JSON and Semi-Structured Types</h2>
+      <div class="code-block">-- PostgreSQL JSON types
+JSON   -- stored as text, no indexing on contents
+JSONB  -- stored as binary, supports GIN indexes, faster queries — prefer JSONB
+
+CREATE TABLE Products (
+  product_id BIGSERIAL PRIMARY KEY,
+  name       TEXT NOT NULL,
+  attributes JSONB  -- flexible attributes differ per product type
+);
+
+INSERT INTO Products VALUES (1, 'Sony Headphones', 
+  '{"brand":"Sony","impedance":32,"wireless":true,"color":"black"}');
+
+-- Query inside JSONB
+SELECT name, attributes->>'brand' AS brand 
+FROM Products 
+WHERE attributes->>'wireless' = 'true';
+
+-- GIN index makes JSONB queries fast
+CREATE INDEX ON Products USING GIN(attributes);
+
+-- MySQL JSON type (introduced in 5.7)
+CREATE TABLE Events (
+  event_id INT PRIMARY KEY,
+  payload  JSON NOT NULL
+);
+-- Extract with JSON_EXTRACT or ->
+SELECT JSON_EXTRACT(payload, '$.user_id') FROM Events;</div>
+
+      <h2>UUID Types</h2>
+      <div class="code-block">-- PostgreSQL native UUID type
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE TABLE Sessions (
+  session_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id    BIGINT NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL
+);
+
+-- Or use gen_random_uuid() (built-in since PostgreSQL 13)
+session_id UUID PRIMARY KEY DEFAULT gen_random_uuid()
+
+-- When to use UUID vs BIGINT:
+-- UUID: distributed systems (no coordination needed for ID generation), public-facing IDs
+-- BIGINT: simpler, smaller (8 bytes vs 16), faster B-tree indexing, internal-only IDs
+-- UUIDv7 (ordered): retains UUID benefits but generates time-ordered values for better index locality</div>
+
+      <h2>Constraints In Depth</h2>
+
+      <h3>PRIMARY KEY</h3>
+      <div class="code-block">-- Single column PK
+CREATE TABLE Customers (
+  customer_id BIGSERIAL PRIMARY KEY,
+  ...
+);
+
+-- Composite PK (junction table)
+CREATE TABLE Enrollments (
+  student_id INT NOT NULL,
+  course_id  INT NOT NULL,
+  enrolled_on DATE NOT NULL,
+  PRIMARY KEY (student_id, course_id)
+);
+
+-- Column-level vs Table-level constraint syntax
+-- Column-level: right after the column type
+-- Table-level: required for composite constraints; also for named constraints
+CONSTRAINT pk_enrollments PRIMARY KEY (student_id, course_id)</div>
+
+      <h3>FOREIGN KEY & Referential Actions</h3>
+      <div class="code-block">CREATE TABLE Orders (
+  order_id    BIGSERIAL PRIMARY KEY,
+  customer_id BIGINT NOT NULL,
+  CONSTRAINT fk_orders_customer
+    FOREIGN KEY (customer_id)
+    REFERENCES Customers(customer_id)
+    ON DELETE RESTRICT    -- prevent deleting customer who has orders
+    ON UPDATE CASCADE     -- if customer_id changes, update orders too
+);
+
+-- ON DELETE / ON UPDATE options:
+-- RESTRICT:     Raise error if referenced row would be deleted/updated (default in most DBs)
+-- CASCADE:      Automatically delete/update child rows
+-- SET NULL:     Set FK to NULL in child rows (FK column must be nullable)
+-- SET DEFAULT:  Set FK to its default value
+-- NO ACTION:    Like RESTRICT but checked at end of transaction (PostgreSQL distinction)
+
+-- Real-world examples:
+-- Order line items: ON DELETE CASCADE (delete order → delete its line items)
+-- Audit logs: ON DELETE SET NULL (user deleted → keep log, set user_id = NULL)
+-- Category parent: ON DELETE RESTRICT (can't delete parent if children exist)</div>
+
+      <h3>UNIQUE Constraint</h3>
+      <div class="code-block">-- Single column unique
+ALTER TABLE Users ADD CONSTRAINT uq_users_email UNIQUE (email);
+
+-- Composite unique (unique combination, not individual columns)
+CREATE TABLE Bookings (
+  room_id   INT NOT NULL,
+  date      DATE NOT NULL,
+  user_id   INT NOT NULL,
+  UNIQUE (room_id, date)   -- one booking per room per date
+);
+
+-- Partial unique index (PostgreSQL) — unique only when condition is met
+CREATE UNIQUE INDEX uq_active_username
+  ON Users(username) WHERE deleted_at IS NULL;
+-- Multiple users can have the same username only if they're deleted (soft-delete pattern)</div>
+
+      <h3>CHECK Constraint</h3>
+      <div class="code-block">-- Domain checks
+CREATE TABLE Products (
+  product_id BIGSERIAL PRIMARY KEY,
+  price      DECIMAL(10,2) NOT NULL,
+  discount   DECIMAL(5,2) NOT NULL DEFAULT 0,
+  stock      INT NOT NULL DEFAULT 0,
+  status     VARCHAR(20) NOT NULL,
+  
+  CONSTRAINT chk_price_positive    CHECK (price > 0),
+  CONSTRAINT chk_discount_range    CHECK (discount >= 0 AND discount <= price),
+  CONSTRAINT chk_stock_nonneg      CHECK (stock >= 0),
+  CONSTRAINT chk_status_valid      CHECK (status IN ('active','inactive','discontinued'))
+);
+
+-- Cross-column check
+CREATE TABLE Events (
+  event_id   INT PRIMARY KEY,
+  start_time TIMESTAMPTZ NOT NULL,
+  end_time   TIMESTAMPTZ NOT NULL,
+  CONSTRAINT chk_event_duration CHECK (end_time > start_time)
+);</div>
+
+      <h3>NOT NULL and DEFAULT</h3>
+      <div class="code-block">CREATE TABLE Articles (
+  article_id   BIGSERIAL PRIMARY KEY,
+  title        TEXT NOT NULL,                     -- always required
+  content      TEXT NOT NULL,
+  published    BOOLEAN NOT NULL DEFAULT FALSE,    -- safe default
+  view_count   INT NOT NULL DEFAULT 0,            -- initialized to 0
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  deleted_at   TIMESTAMPTZ NULL                   -- NULL = not deleted (soft delete)
+);</div>
+
+      <h2>DDL Operations: ALTER TABLE</h2>
+      <div class="code-block">-- Add a column
+ALTER TABLE Users ADD COLUMN phone VARCHAR(20);
+
+-- Rename a column (PostgreSQL, MySQL 8+)
+ALTER TABLE Users RENAME COLUMN phone TO phone_number;
+
+-- Change data type (be careful — may require data migration)
+ALTER TABLE Products ALTER COLUMN price TYPE NUMERIC(12,2);
+
+-- Add a constraint after creation
+ALTER TABLE Orders ADD CONSTRAINT chk_total_positive CHECK (total > 0);
+
+-- Drop a constraint
+ALTER TABLE Orders DROP CONSTRAINT chk_total_positive;
+
+-- Add foreign key to existing table
+ALTER TABLE OrderItems
+  ADD CONSTRAINT fk_orderitems_order
+  FOREIGN KEY (order_id) REFERENCES Orders(order_id) ON DELETE CASCADE;
+
+-- Drop a column (dangerous if referenced by FK or app code)
+ALTER TABLE Users DROP COLUMN legacy_field;
+
+-- Production tip: in large tables, adding NOT NULL columns requires careful strategy
+-- In PostgreSQL: add the column with a DEFAULT first (non-blocking), then set NOT NULL (takes lock)
+ALTER TABLE BigTable ADD COLUMN created_at TIMESTAMPTZ DEFAULT NOW();
+ALTER TABLE BigTable ALTER COLUMN created_at SET NOT NULL;</div>
+
+      <h2>Schema Design Pattern: E-Commerce Orders</h2>
+      <div class="code-block">CREATE TABLE Customers (
+  customer_id  BIGSERIAL PRIMARY KEY,
+  email        VARCHAR(254) UNIQUE NOT NULL,
+  name         VARCHAR(200) NOT NULL,
+  phone        VARCHAR(20),
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT chk_email_format CHECK (email ~* '^[^@]+@[^@]+\.[^@]+$')
+);
+
+CREATE TABLE Products (
+  product_id   BIGSERIAL PRIMARY KEY,
+  sku          VARCHAR(50) UNIQUE NOT NULL,
+  name         TEXT NOT NULL,
+  price        DECIMAL(10,2) NOT NULL CHECK (price > 0),
+  stock        INT NOT NULL DEFAULT 0 CHECK (stock >= 0),
+  is_active    BOOLEAN NOT NULL DEFAULT TRUE
+);
+
+CREATE TABLE Orders (
+  order_id     BIGSERIAL PRIMARY KEY,
+  customer_id  BIGINT NOT NULL REFERENCES Customers(customer_id) ON DELETE RESTRICT,
+  status       VARCHAR(20) NOT NULL DEFAULT 'pending'
+               CHECK (status IN ('pending','confirmed','shipped','delivered','cancelled')),
+  total        DECIMAL(10,2) NOT NULL CHECK (total >= 0),
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE OrderItems (
+  order_item_id BIGSERIAL PRIMARY KEY,
+  order_id      BIGINT NOT NULL REFERENCES Orders(order_id) ON DELETE CASCADE,
+  product_id    BIGINT NOT NULL REFERENCES Products(product_id) ON DELETE RESTRICT,
+  quantity      INT NOT NULL CHECK (quantity > 0),
+  unit_price    DECIMAL(10,2) NOT NULL CHECK (unit_price > 0),  -- snapshot at order time
+  UNIQUE (order_id, product_id)  -- same product appears once per order
+);</div>
+
+      <h2>Summary</h2>
+      <ul>
+        <li>Use <code>DECIMAL</code> for money, <code>BIGINT</code> or <code>UUID</code> for distributed IDs, <code>TIMESTAMPTZ</code> for timestamps</li>
+        <li>Constraints are the database's last line of defense — use CHECK, NOT NULL, and UNIQUE liberally</li>
+        <li>FK referential actions (CASCADE, RESTRICT, SET NULL) represent business rules — choose deliberately</li>
+        <li>Prefer named constraints (<code>CONSTRAINT name ...</code>) so you can drop/modify them in migrations</li>
+        <li>On large production tables, schema changes need careful query planning to avoid long locks</li>
+      </ul>
+    </article>
+  </main>
+
+  <footer class="page-footer">
+    <p>Part of the DBMS Series — <a href="/articles.html">View all articles</a></p>
+  </footer>
+</body>
+</html>

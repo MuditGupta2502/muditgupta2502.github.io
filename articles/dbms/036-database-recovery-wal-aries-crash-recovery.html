@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>Database Recovery: WAL, ARIES and Crash Recovery | Mudit Gupta</title>
+  <meta name="description" content="How databases survive crashes — Write-Ahead Logging (WAL), ARIES algorithm (Analysis, Redo, Undo passes), checkpoints, and Point-in-Time Recovery." />
+  <link rel="stylesheet" href="/assets/css/articles.css" />
+  <style>
+    .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
+    .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; color: #1a1a1a; }
+    .article-content h3 { margin-top: 1.5rem; margin-bottom: 0.75rem; color: #1a1a1a; }
+    .article-content p { margin-bottom: 1rem; color: #333; }
+    .article-content ul, .article-content ol { margin-left: 2rem; margin-bottom: 1rem; }
+    .article-content li { margin-bottom: 0.5rem; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; white-space: pre; margin-bottom: 1rem; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    table th, table td { border: 1px solid #ddd; padding: 0.75rem; text-align: left; }
+    table th { background: #f0f0f0; font-weight: 600; }
+    .note-box { background: #fff8e1; border-left: 4px solid #f9a825; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .tip-box { background: #e8f5e9; border-left: 4px solid #43a047; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .danger-box { background: #ffebee; border-left: 4px solid #e53935; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a href="/" class="home-link">Mudit Gupta</a>
+      <div class="topbar-actions">
+        <a href="/articles.html" class="btn btn-outline">Articles</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <article class="article-content">
+      <p class="kicker">DBMS Series | Part 036</p>
+      <h1>Database Recovery: WAL, ARIES and Crash Recovery</h1>
+      <p class="meta">Internals | 22 min read</p>
+
+      <p>
+        Every database must answer: what happens when the server crashes mid-transaction?
+        The durability guarantee of ACID means committed data must survive failures.
+        Write-Ahead Logging (WAL) and the ARIES recovery algorithm are the standard
+        mechanisms behind this guarantee in virtually every major database system.
+      </p>
+
+      <h2>Failure Types</h2>
+      <table>
+        <tr><th>Failure Type</th><th>Scope</th><th>Recovery Approach</th></tr>
+        <tr><td>Transaction failure</td><td>Single transaction aborts</td><td>Rollback — undo that transaction's changes</td></tr>
+        <tr><td>System/crash failure</td><td>All in-flight transactions lost; disk intact</td><td>WAL + ARIES analysis/redo/undo</td></tr>
+        <tr><td>Media failure</td><td>Disk failure; data pages lost</td><td>Backup restore + WAL replay (PITR)</td></tr>
+        <tr><td>Disaster failure</td><td>Entire data center lost</td><td>Geo-redundant backups + replication</td></tr>
+      </table>
+
+      <h2>Write-Ahead Logging (WAL)</h2>
+      <p>
+        The core rule: <strong>write the log record to durable storage before writing the
+        data page to disk</strong>. This is the "write-ahead" in WAL.
+      </p>
+      <div class="code-block">-- WAL rule formalized:
+-- 1. UNDO rule: log record for OLD value must be written to disk
+--    before the data page is written (so aborted changes can be undone)
+-- 2. REDO rule: log record for NEW value must be written to disk
+--    before COMMIT is acknowledged (so committed changes can be replayed)
+
+-- What a WAL record contains:
+-- [LSN | Transaction ID | Page ID | Redo data | Undo data | Prev LSN]
+-- LSN = Log Sequence Number — monotonically increasing, uniquely identifies each record
+
+-- PostgreSQL WAL record (simplified concept):
+-- LSN:  0/1234A0
+-- XID:  7891
+-- Type: UPDATE
+-- Relation: public.accounts
+-- Block:    37
+-- Offset:   512
+-- Old tuple: (balance=5000.00)    -- needed for UNDO
+-- New tuple: (balance=4500.00)    -- needed for REDO
+-- Prev LSN: 0/123380              -- chain back to previous record of same transaction
+
+-- During normal operation:
+-- 1. Transaction makes changes to buffer pool (in-memory pages)
+-- 2. WAL record written to WAL buffer
+-- 3. On COMMIT: WAL buffer flushed to disk (fsync)
+-- 4. Data pages may remain dirty in buffer pool (written lazily by bgwriter)
+-- This means: log on disk ahead of data on disk → write-ahead property maintained</div>
+
+      <h2>Checkpoints</h2>
+      <div class="code-block">-- Problem: on crash, must replay WAL from the beginning of time → slow
+-- Solution: checkpoints periodically record which pages are dirty, flush them to disk
+-- After a checkpoint: only WAL records AFTER the checkpoint LSN need to be replayed
+
+-- What happens during a checkpoint:
+-- 1. Record checkpoint-start LSN in WAL
+-- 2. Flush all dirty pages from buffer pool to disk
+-- 3. Write checkpoint record to WAL (containing lowest LSN of any active transaction)
+-- 4. Update "pg_control" file with newest checkpoint LSN
+
+-- Sharp checkpoint: flushes ALL dirty pages immediately
+-- Pros: precise recovery point; Cons: massive I/O spike disrupts normal operations
+-- PostgreSQL uses fuzzy checkpoints: pages flushed incrementally over checkpoint_completion_target
+
+-- Key LSN pointers after a crash:
+-- redo_lsn = checkpoint LSN → replay starts here
+-- undo_lsn = oldest "begin" LSN of any in-flight transaction at checkpoint time
+-- Recovery scans WAL from min(redo_lsn, undo_lsn) onward
+
+-- Configuration (PostgreSQL):
+-- max_wal_size = 1GB          -- trigger checkpoint if WAL grows this large
+-- checkpoint_timeout = 5min   -- trigger checkpoint this often (at most)
+-- checkpoint_completion_target = 0.9 -- spread I/O over 90% of checkpoint interval</div>
+
+      <h2>ARIES Recovery Algorithm</h2>
+      <p>
+        ARIES (Algorithm for Recovery and Isolation Exploiting Semantics) is the standard
+        crash recovery algorithm, used in IBM DB2, SQL Server, and forms the conceptual
+        basis for PostgreSQL and many others. It consists of three passes over the WAL.
+      </p>
+
+      <h3>Pass 1: Analysis</h3>
+      <div class="code-block">-- Forward scan from last checkpoint to end of log
+-- Builds two tables:
+--   Transaction Table (ATT): Active Transactions at crash time
+--     → XID, status (commit / in-progress), lastLSN
+--   Dirty Page Table (DPT): Pages that were modified since last checkpoint
+--     → PageID, recLSN (LSN of earliest record that dirtied that page)
+
+-- Example state at the end of analysis:
+-- ATT:
+--   XID=T1, status=IN-PROGRESS, lastLSN=0/5000
+--   XID=T2, status=COMMITTED,   lastLSN=0/4800   -- committed late
+-- DPT:
+--   Page 37, recLSN=0/1000
+--   Page 42, recLSN=0/3200
+
+-- T1 will need to be UNDONE (it was in-progress at crash)
+-- T2 may need to be REDONE (committed but page might not have been flushed)
+
+-- RedoLSN = min recLSN across all pages in DPT
+-- This is where the redo pass begins</div>
+
+      <h3>Pass 2: Redo</h3>
+      <div class="code-block">-- Forward scan from RedoLSN to end of log
+-- Re-applies ALL changes: both committed AND uncommitted transactions
+-- "Repeat history" — bring database to exact state at crash moment
+-- Why redo uncommitted changes? Because undo pass will clean them up properly
+
+-- For each log record in the scan:
+-- 1. Check if page is in DPT and record's LSN >= page's recLSN
+-- 2. Read the actual page from disk
+-- 3. If page's pageLSN < record's LSN → apply the redo action (page is stale)
+-- 4. Otherwise skip (page already has this change from before checkpoint flush)
+
+-- pageLSN: the LSN of the last operation applied to a page
+-- Stored in the page header — survives to disk
+
+-- After redo pass: pages on disk reflect the exact state at crash time
+-- Active transactions' changes are present but uncommitted</div>
+
+      <h3>Pass 3: Undo</h3>
+      <div class="code-block">-- Backward scan — undo all changes from loser (in-progress) transactions
+-- Uses the prevLSN chain in each record to walk backwards through the log
+
+-- Process:
+-- Start from lastLSN of each loser transaction (from ATT after analysis)
+-- For each record:
+--   1. Apply the undo operation (reverse the change)
+--   2. Write a Compensation Log Record (CLR) to WAL
+--      CLR is REDO-only (if we crash during undo, CLR tells us "this undo was done")
+--   3. Follow prevLSN to find prior record of same transaction
+--   4. Repeat until BEGIN record is reached for this transaction
+
+-- CLR (Compensation Log Record):
+-- [LSN | XID | undo-info | undoNextLSN]
+-- undoNextLSN points past the compensated record → if crash during undo,
+-- we know where to resume undoing
+
+-- This makes ARIES idempotent: can crash during recovery and restart safely
+
+-- After undo pass: database is consistent
+-- Committed transactions: all changes present
+-- Uncommitted (loser) transactions: all changes rolled back</div>
+
+      <h2>Point-in-Time Recovery (PITR)</h2>
+      <div class="code-block">-- Scenario: data corruption, accidental DELETE, disk failure
+-- Need: restore database to a specific moment in the past
+
+-- PITR requires:
+-- 1. A base backup (physical snapshot of $PGDATA directory)
+-- 2. Continuous WAL archiving since the base backup
+
+-- PostgreSQL PITR workflow:
+-- Step 1: Take base backup
+pg_basebackup -h localhost -U replication_user -D /backup/base/ -Ft -z -P
+-- Creates a tar of the entire data directory
+
+-- Step 2: Archive WAL continuously (postgresql.conf):
+-- archive_mode = on
+-- archive_command = 'cp %p /wal/archive/%f'
+-- (Or use pgWAL, wal-g, Barman for cloud-native WAL shipping)
+
+-- Step 3: When disaster strikes, restore:
+-- a) Restore base backup to new location
+-- b) Create recovery.conf (PG11-) or postgresql.conf (PG12+):
+recovery_target_time = '2024-07-15 14:30:00'  -- restore to this exact moment
+restore_command = 'cp /wal/archive/%f %p'
+recovery_target_action = 'promote'            -- once target reached, promote to read/write
+
+-- c) Start PostgreSQL — it replays WAL until the target timestamp
+-- d) Once at target: server promotes itself and begins accepting writes
+
+-- RTO (Recovery Time Objective) with PITR:
+-- Time = restore base backup + replay WAL from backup to target point
+-- Larger WAL gap → longer recovery time
+-- Use more frequent base backups to shorten the WAL replay window</div>
+
+      <h2>LSN and Page Anatomy</h2>
+      <div class="code-block">-- Every PostgreSQL page (8KB default) has a header that includes:
+-- pd_lsn: LSN of the last WAL record that modified this page
+-- pd_checksum: page checksum (optional but recommended)
+-- pd_flags: various flags (all-visible, all-frozen, etc.)
+-- pd_lower / pd_upper: free space pointers
+
+-- LSN comparison:
+-- Recovery uses pageLSN to skip redundant redo operations:
+-- If pageLSN >= log record's LSN → page already has this change → skip
+
+-- Query current WAL position (PostgreSQL):
+SELECT pg_current_wal_lsn();       -- current WAL write position
+SELECT pg_current_wal_insert_lsn(); -- where next record will be written
+SELECT pg_walfile_name(pg_current_wal_lsn()); -- WAL file name
+
+-- Check recovery status:
+SELECT * FROM pg_stat_wal_receiver;  -- on replica: shows received LSN
+SELECT * FROM pg_stat_replication;   -- on primary: shows replica LSN positions</div>
+
+      <div class="tip-box">
+        <strong>Real-world implication of WAL:</strong> The fsync debate. WAL durability
+        requires an fsync (or fdatasync) on every COMMIT. On cloud instances with
+        network-attached storage, fsyncs can take 1-10ms — limiting throughput to
+        100-1000 commits/second. Solutions include: group commit (batch multiple
+        transactions into one fsync), synchronous_commit = off (async commit; lose at
+        most a few ms of data), or using write-optimized hardware (NVMe, storage with
+        NVRAM write cache).
+      </div>
+
+      <h2>Summary</h2>
+      <ul>
+        <li>WAL rule: log record must reach disk before the data page; COMMIT is durable only after WAL fsync</li>
+        <li>Checkpoints reduce recovery time by flushing dirty pages, so recovery replays only the tail of the WAL</li>
+        <li>ARIES: Analysis (rebuild ATT + DPT) → Redo (repeat history) → Undo (roll back losers with CLRs)</li>
+        <li>CLRs make ARIES idempotent — safe to crash mid-recovery and restart</li>
+        <li>PITR = base backup + continuous WAL archiving → can restore to any point in time</li>
+        <li>pageLSN enables idempotent redo: skip pages already up-to-date</li>
+      </ul>
+    </article>
+  </main>
+
+  <footer class="page-footer">
+    <p>Part of the DBMS Series — <a href="/articles.html">View all articles</a></p>
+  </footer>
+</body>
+</html>

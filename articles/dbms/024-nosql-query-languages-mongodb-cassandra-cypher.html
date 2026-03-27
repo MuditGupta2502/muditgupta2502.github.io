@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>NoSQL Query Languages: MongoDB, Cassandra CQL, and Cypher | Mudit Gupta</title>
+  <meta name="description" content="Query language contrasts: MongoDB aggregation pipeline, Cassandra CQL partition key design, Neo4j Cypher graph queries, and how each reflects its underlying data model." />
+  <link rel="stylesheet" href="/assets/css/articles.css" />
+  <style>
+    .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
+    .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; color: #1a1a1a; }
+    .article-content h3 { margin-top: 1.5rem; margin-bottom: 0.75rem; color: #1a1a1a; }
+    .article-content p { margin-bottom: 1rem; color: #333; }
+    .article-content ul, .article-content ol { margin-left: 2rem; margin-bottom: 1rem; }
+    .article-content li { margin-bottom: 0.5rem; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; white-space: pre; margin-bottom: 1rem; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    table th, table td { border: 1px solid #ddd; padding: 0.75rem; text-align: left; }
+    table th { background: #f0f0f0; font-weight: 600; }
+    .note-box { background: #fff8e1; border-left: 4px solid #f9a825; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .tip-box { background: #e8f5e9; border-left: 4px solid #43a047; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .danger-box { background: #ffebee; border-left: 4px solid #e53935; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a href="/" class="home-link">Mudit Gupta</a>
+      <div class="topbar-actions">
+        <a href="/articles.html" class="btn btn-outline">Articles</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <article class="article-content">
+      <p class="kicker">DBMS Series | Part 024</p>
+      <h1>NoSQL Query Languages: MongoDB, Cassandra CQL and Cypher</h1>
+      <p class="meta">NoSQL Databases | 28 min read</p>
+
+      <p>
+        Each NoSQL database invented its own query language shaped by its underlying data model.
+        Understanding these languages — and why they look the way they do — reveals the deeper
+        architectural constraints and design choices of each database. This article covers the
+        three most widely used: MongoDB's aggregation pipeline, Cassandra's CQL, and Neo4j's Cypher.
+      </p>
+
+      <h2>Document Model: MongoDB</h2>
+      <p>
+        MongoDB stores data as BSON documents (binary JSON). Collections hold documents of varying
+        structure. The query language is JSON-based with operators for filtering, projection,
+        and aggregation.
+      </p>
+      <h3>Basic CRUD</h3>
+      <div class="code-block">-- Sample document:
+{
+  "_id": ObjectId("64a1c..."),
+  "customer_id": 12345,
+  "name": "Priya Sharma",
+  "tier": "gold",
+  "address": {
+    "city": "Mumbai",
+    "pin": 400001
+  },
+  "tags": ["premium", "early-adopter"],
+  "total_orders": 42
+}
+
+// Find customers in Mumbai with more than 10 orders:
+db.customers.find(
+  { "address.city": "Mumbai", "total_orders": { $gt: 10 } },
+  { name: 1, tier: 1, "address.city": 1, _id: 0 }  // projection
+)
+
+// Operators:
+// $gt, $gte, $lt, $lte, $ne  — comparison
+// $in: ["gold","platinum"]    — value in array
+// $regex: /^priya/i           — regex match
+// $exists: true               — field presence check
+// $type: "string"             — BSON type check
+// $elemMatch: matches element in array subdocument
+
+// Update: add 1 to total_orders, set last_seen
+db.customers.updateOne(
+  { customer_id: 12345 },
+  {
+    $inc: { total_orders: 1 },
+    $set: { last_seen: new Date() },
+    $addToSet: { tags: "high-value" }  // add to set (no duplicates)
+  }
+)
+
+// Upsert: insert if not found
+db.customers.updateOne(
+  { customer_id: 99999 },
+  { $set: { name: "Raj Kumar", tier: "silver" } },
+  { upsert: true }
+)</div>
+
+      <h3>Aggregation Pipeline</h3>
+      <p>
+        The aggregation pipeline is MongoDB's answer to SQL GROUP BY, JOINs, and analytical queries.
+        Each stage transforms the document stream passing through it.
+      </p>
+      <div class="code-block">// SQL equivalent:
+// SELECT tier, COUNT(*), SUM(total_spent), AVG(total_spent)
+// FROM customers
+// WHERE city = 'Mumbai'
+// GROUP BY tier
+// HAVING COUNT(*) > 100
+// ORDER BY avg_spent DESC
+
+db.customers.aggregate([
+  // Stage 1: $match — like WHERE (should come first to use indexes)
+  { $match: { "address.city": "Mumbai" } },
+
+  // Stage 2: $group — like GROUP BY
+  { $group: {
+      _id: "$tier",
+      count:     { $sum: 1 },
+      total:     { $sum: "$total_spent" },
+      avg_spent: { $avg: "$total_spent" }
+  }},
+
+  // Stage 3: $match again — like HAVING
+  { $match: { count: { $gt: 100 } } },
+
+  // Stage 4: $project — rename/reshape fields
+  { $project: {
+      tier: "$_id",
+      count: 1,
+      avg_spent: { $round: ["$avg_spent", 2] },
+      _id: 0
+  }},
+
+  // Stage 5: $sort
+  { $sort: { avg_spent: -1 } },
+
+  // Stage 6: $limit
+  { $limit: 10 }
+])
+
+// Other useful stages:
+// $lookup: LEFT OUTER JOIN to another collection
+db.orders.aggregate([
+  { $lookup: {
+      from: "customers",
+      localField: "customer_id",
+      foreignField: "customer_id",
+      as: "customer"   // array of matching documents
+  }},
+  { $unwind: "$customer" },  // flatten the array (1:1 join result)
+  { $project: {
+      order_id: 1,
+      total: 1,
+      "customer.name": 1,
+      "customer.tier": 1
+  }}
+])
+
+// $unwind: flatten an array field into separate documents
+// $addFields: compute new fields without removing existing ones
+// $facet: run multiple aggregation pipelines in parallel (multi-facet search)
+// $bucket: bucket numeric values into ranges (like histograms)
+// $setWindowFields (MongoDB 5.0): window functions like SQL LAG/LEAD/RANK</div>
+
+      <h3>Indexes in MongoDB</h3>
+      <div class="code-block">// Single field index:
+db.customers.createIndex({ "address.city": 1 })     // ascending
+db.customers.createIndex({ total_spent: -1 })        // descending (useful for sort)
+
+// Compound index (order matters — equality fields first, then sort fields, then range):
+db.orders.createIndex({ customer_id: 1, order_date: -1 })
+// Supports: find({customer_id:X}).sort({order_date:-1}) efficiently
+
+// Multikey index — automatically created when indexing an array field:
+db.customers.createIndex({ tags: 1 })
+// Supports: $in, $all, $elemMatch queries on the tags array
+
+// Text index — full text search:
+db.products.createIndex({ description: "text", name: "text" })
+db.products.find({ $text: { $search: "wireless keyboard" } }, { score: { $meta: "textScore" } })
+
+// TTL index — automatically delete documents after expiry:
+db.sessions.createIndex({ expires_at: 1 }, { expireAfterSeconds: 0 })
+// Documents where expires_at < now() are deleted by background thread</div>
+
+      <h2>Wide-Column Model: Apache Cassandra CQL</h2>
+      <p>
+        Cassandra is a wide-column store — data is organized in tables with a mandatory partition
+        key. ALL queries must specify the partition key (or use secondary indexes, which are
+        expensive). This constraint forces you to design tables around your query patterns.
+      </p>
+      <div class="code-block">-- Partition key: determines which node holds the data
+-- Clustering key: sorts data within a partition on disk
+
+-- Table design for: "get all orders for a customer, sorted by date descending"
+CREATE TABLE orders_by_customer (
+    customer_id  UUID,
+    order_date   TIMESTAMP,
+    order_id     UUID,
+    total        DECIMAL,
+    status       TEXT,
+    PRIMARY KEY ((customer_id), order_date, order_id)
+    -- (customer_id) = partition key → all data for one customer on one node
+    -- order_date, order_id = clustering keys → sorted on disk DESC
+) WITH CLUSTERING ORDER BY (order_date DESC, order_id ASC)
+  AND COMPACTION = {'class': 'LeveledCompactionStrategy'};
+
+-- Query (fast — hits exactly one partition):
+SELECT * FROM orders_by_customer
+WHERE customer_id = 550e8400-e29b-41d4-a716-446655440000
+AND order_date >= '2024-01-01'
+ORDER BY order_date DESC
+LIMIT 20;
+
+-- CANNOT run without partition key (Cassandra will refuse or full-scan):
+-- SELECT * FROM orders_by_customer WHERE status = 'pending';
+-- This queries ALL partitions — extremely expensive</div>
+
+      <h3>Data Modelling Rules in Cassandra</h3>
+      <div class="code-block">-- Rule 1: One table per query pattern
+-- If you need "orders by customer" AND "orders by product" → two tables, duplicate data
+
+CREATE TABLE orders_by_customer (...) -- for customer dashboard
+CREATE TABLE orders_by_product (...)  -- for product analytics
+
+-- Rule 2: Partition spread — avoid hot partitions
+-- Bad: partition by day → all writes on current day go to ONE partition
+CREATE TABLE events (day DATE PRIMARY KEY, ...); -- HOT PARTITION
+
+-- Better: add a bucket to distribute writes
+CREATE TABLE events (
+    day    DATE,
+    bucket INT,    -- bucket = random(0..15) → 16 partitions per day
+    event_id UUID,
+    payload TEXT,
+    PRIMARY KEY ((day, bucket), event_id)
+);
+
+-- Rule 3: Avoid unbounded partitions
+-- If one customer has 100M orders, one partition becomes huge → slow queries
+-- Add a time bucket: partition on (customer_id, year_month)
+
+CREATE TABLE orders_by_customer_month (
+    customer_id UUID,
+    year_month  TEXT,       -- '2024-01' — limits partition size to one month
+    order_date  TIMESTAMP,
+    order_id    UUID,
+    PRIMARY KEY ((customer_id, year_month), order_date)
+) WITH CLUSTERING ORDER BY (order_date DESC);</div>
+
+      <h3>Lightweight Transactions (Compare-and-Set)</h3>
+      <div class="code-block">-- Cassandra's "IF NOT EXISTS" / "IF condition" uses Paxos consensus
+-- Very expensive (4 round trips) but provides linearizable single-row consistency
+
+-- Insert only if not exists:
+INSERT INTO users (user_id, email, username)
+VALUES (uuid(), 'priya@example.com', 'priya')
+IF NOT EXISTS;
+
+-- Compare-and-swap: update only if current value matches
+UPDATE inventory
+SET available = available - 1
+WHERE product_id = 'PROD001'
+IF available > 0;
+
+-- Returns: [applied] boolean + current values if not applied
+-- Use sparingly — LWTs reduce throughput by ~10x</div>
+
+      <h2>Graph Model: Neo4j Cypher</h2>
+      <p>
+        Neo4j stores data as nodes and relationships. Cypher uses ASCII-art patterns to express
+        graph traversals intuitively. It excels at multi-hop relationship queries that would
+        require many self-joins in SQL.
+      </p>
+      <div class="code-block">-- Graph is: nodes (:Label {properties}) connected by -[:RELATIONSHIP]-> 
+
+-- Create nodes:
+CREATE (:Customer {id: 1, name: 'Priya Sharma', city: 'Mumbai'})
+CREATE (:Product  {id: 101, name: 'Wireless Keyboard', category: 'Electronics'})
+
+-- Create relationship:
+MATCH (c:Customer {id: 1}), (p:Product {id: 101})
+CREATE (c)-[:PURCHASED {date: date('2024-03-15'), quantity: 1}]->(p)
+
+-- Find all products purchased by Priya:
+MATCH (c:Customer {name: 'Priya Sharma'})-[:PURCHASED]->(p:Product)
+RETURN p.name, p.category
+
+-- Find customers who bought the same product as Priya (1-hop mutual connection):
+MATCH (priya:Customer {name: 'Priya Sharma'})-[:PURCHASED]->(p:Product)
+      <-[:PURCHASED]-(other:Customer)
+WHERE other <> priya
+RETURN DISTINCT other.name, p.name AS common_product
+
+-- Multi-hop: friends of friends who reviewed a product Priya might like
+MATCH (priya:Customer {name:'Priya Sharma'})
+      -[:FRIEND*1..2]->(friend:Customer)    -- up to 2 hops
+      -[:REVIEWED]->(p:Product)
+WHERE NOT (priya)-[:PURCHASED]->(p)         -- Priya hasn't bought it yet
+RETURN p.name, COUNT(DISTINCT friend) AS recommendation_strength
+ORDER BY recommendation_strength DESC
+LIMIT 5</div>
+
+      <h3>More Cypher Patterns</h3>
+      <div class="code-block">-- Shortest path between two nodes:
+MATCH path = shortestPath(
+    (start:Customer {id: 1})-[:KNOWS*]-(end:Customer {id: 99})
+)
+RETURN length(path), [n IN nodes(path) | n.name] AS path_names
+
+-- All paths up to length 4:
+MATCH path = (a:Customer)-[:KNOWS*1..4]-(b:Customer)
+WHERE a.id = 1 AND b.id = 99
+RETURN path ORDER BY length(path) ASC
+
+-- Aggregation: count purchases per category
+MATCH (c:Customer)-[:PURCHASED]->(p:Product)
+RETURN p.category, COUNT(*) AS purchases, SUM(c.total_spent) AS revenue
+ORDER BY revenue DESC
+
+-- Optional match (like LEFT JOIN):
+MATCH (c:Customer)
+OPTIONAL MATCH (c)-[:PURCHASED]->(p:Product)
+RETURN c.name, COUNT(p) AS total_products_bought
+-- Customers with no purchases return COUNT(p) = 0
+
+-- Page rank / centrality (built-in graph algorithms):
+CALL gds.pageRank.stream('customer_graph')
+YIELD nodeId, score
+RETURN gds.util.asNode(nodeId).name AS customer, score
+ORDER BY score DESC LIMIT 10</div>
+
+      <h2>Query Language Comparison</h2>
+      <table>
+        <tr><th>Feature</th><th>SQL (RDBMS)</th><th>MongoDB</th><th>Cassandra CQL</th><th>Cypher (Neo4j)</th></tr>
+        <tr><td>Join model</td><td>Explicit JOIN</td><td>$lookup (pipeline stage)</td><td>No joins — denormalize</td><td>Relationship traversal</td></tr>
+        <tr><td>Filter flexibility</td><td>Any column (with indexes)</td><td>Any field (with indexes)</td><td>Partition key required</td><td>Any property</td></tr>
+        <tr><td>Aggregation</td><td>GROUP BY, window functions</td><td>$group, $setWindowFields</td><td>GROUP BY with COUNT/SUM</td><td>RETURN with aggregates</td></tr>
+        <tr><td>Schema enforcement</td><td>Strict DDL</td><td>Flexible per document</td><td>Column families defined</td><td>Optional labels/properties</td></tr>
+        <tr><td>Best for</td><td>Complex relational queries</td><td>Document retrieval, search</td><td>High-write time-series</td><td>Relationship traversal</td></tr>
+      </table>
+
+      <div class="tip-box">
+        <strong>Design philosophy takeaway:</strong> Each query language is limited by its data model
+        by design. Cassandra's lack of cross-partition queries isn't a feature gap — it's what
+        enables linear write scalability. Designing your Cassandra schema is designing your query
+        plan in advance. Similarly, Cypher's graph traversal syntax is only possible because
+        Neo4j stores all relationships in adjacency lists.
+      </div>
+
+      <h2>Summary</h2>
+      <ul>
+        <li>MongoDB uses JSON-based queries with a rich aggregation pipeline — flexible but needs indexes</li>
+        <li>The aggregation pipeline stages ($match, $group, $lookup, $project) mirror SQL operations</li>
+        <li>Cassandra requires the partition key in all queries — data modelling is query modelling</li>
+        <li>Cassandra's wide tables avoid joins by duplicating data across multiple query-specific tables</li>
+        <li>Cypher expresses graph traversals as ASCII-art patterns — extremely readable for relationship queries</li>
+        <li>Multi-hop relationship queries in Cypher are natural patterns; in SQL they require recursive CTEs</li>
+      </ul>
+    </article>
+  </main>
+
+  <footer class="page-footer">
+    <p>Part of the DBMS Series — <a href="/articles.html">View all articles</a></p>
+  </footer>
+</body>
+</html>

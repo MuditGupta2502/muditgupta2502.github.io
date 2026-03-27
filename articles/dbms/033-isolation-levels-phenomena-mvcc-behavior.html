@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>Isolation Levels: Phenomena, MVCC Behavior and Real-World Usage | Mudit Gupta</title>
+  <meta name="description" content="SQL isolation levels compared: READ COMMITTED, REPEATABLE READ, SERIALIZABLE. Specific anomalies each prevents, MVCC snapshot behavior in PostgreSQL, and when to use each level." />
+  <link rel="stylesheet" href="/assets/css/articles.css" />
+  <style>
+    .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
+    .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; color: #1a1a1a; }
+    .article-content h3 { margin-top: 1.5rem; margin-bottom: 0.75rem; color: #1a1a1a; }
+    .article-content p { margin-bottom: 1rem; color: #333; }
+    .article-content ul, .article-content ol { margin-left: 2rem; margin-bottom: 1rem; }
+    .article-content li { margin-bottom: 0.5rem; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; white-space: pre; margin-bottom: 1rem; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    table th, table td { border: 1px solid #ddd; padding: 0.75rem; text-align: left; }
+    table th { background: #f0f0f0; font-weight: 600; }
+    .note-box { background: #fff8e1; border-left: 4px solid #f9a825; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .tip-box { background: #e8f5e9; border-left: 4px solid #43a047; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .danger-box { background: #ffebee; border-left: 4px solid #e53935; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a href="/" class="home-link">Mudit Gupta</a>
+      <div class="topbar-actions">
+        <a href="/articles.html" class="btn btn-outline">Articles</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <article class="article-content">
+      <p class="kicker">DBMS Series | Part 033</p>
+      <h1>Isolation Levels: Phenomena, MVCC Behavior and Real-World Usage</h1>
+      <p class="meta">Transactions | 26 min read</p>
+
+      <p>
+        SQL defines four isolation levels — each preventing a specific set of read anomalies.
+        But the SQL-92 specification was written with locking in mind; MVCC databases like
+        PostgreSQL implement these levels differently, sometimes offering stronger guarantees
+        than the standard requires. Understanding what your database actually does at each
+        level is more important than memorizing the standard definition.
+      </p>
+
+      <h2>READ UNCOMMITTED</h2>
+      <div class="code-block">-- Allows dirty reads: can see uncommitted changes from other transactions
+-- SQL standard: the weakest level; allows dirty reads
+
+-- Example:
+-- T1 begins, updates salary = 100000 (not yet committed)
+-- T2 (READ UNCOMMITTED): SELECT salary → reads 100000 even though T1 hasn't committed
+-- T1 rolls back → salary was never 100000 in reality
+-- T2 made a decision based on data that never existed → incorrect
+
+-- PostgreSQL: READ UNCOMMITTED behaves identically to READ COMMITTED
+-- PostgreSQL never allows dirty reads — its MVCC model makes it structurally impossible
+-- The lowest practical level in PostgreSQL is READ COMMITTED
+
+-- When useful in other databases (MySQL READ UNCOMMITTED):
+-- Approximate COUNT(*) on huge tables without blocking
+-- Analytics on data where rough approximations are acceptable
+-- Generally avoided in production</div>
+
+      <h2>READ COMMITTED (Default in PostgreSQL)</h2>
+      <div class="code-block">-- Only sees committed data; no dirty reads
+-- Each STATEMENT gets a fresh snapshot — NOT the transaction start
+
+-- PostgreSQL READ COMMITTED:
+-- Snapshot is taken at the START OF EACH SQL STATEMENT (not transaction start)
+-- This means: within one transaction, two identical SELECT statements may return different rows
+
+-- Demonstrating non-repeatable read in READ COMMITTED:
+-- Session 1 (READ COMMITTED):
+BEGIN;
+SELECT salary FROM employees WHERE id = 1;  -- returns 80000 (snapshot for this statement)
+-- (session 2 updates and commits here)
+SELECT salary FROM employees WHERE id = 1;  -- returns 90000 ← different! (new snapshot)
+COMMIT;
+
+-- Demonstrating phantom read:
+-- Session 1:
+BEGIN;
+SELECT COUNT(*) FROM orders WHERE status = 'pending';  -- returns 5
+-- (session 2 inserts a new pending order and commits here)
+SELECT COUNT(*) FROM orders WHERE status = 'pending';  -- returns 6 ← phantom row
+COMMIT;
+
+-- Practical implication: READ COMMITTED can cause issues in multi-statement transactions
+-- where your code reads data, makes a decision, then writes based on that decision
+-- Another transaction may have changed the data between your READ and WRITE</div>
+
+      <h3>When READ COMMITTED Causes Bugs</h3>
+      <div class="code-block">-- Bug pattern: read-before-write
+-- Goal: "transfer items from category A to category B"
+BEGIN;
+-- Step 1: Read count of A items
+SELECT COUNT(*) FROM products WHERE category = 'A';  -- returns 100
+
+-- (Another transaction updates some A products to category C here and commits)
+
+-- Step 2: Move A items to B (now there are only 80 A items, not 100)
+UPDATE products SET category = 'B' WHERE category = 'A';
+-- The UPDATE is correct (updates current 80 rows)
+-- But any subsequent SELECT within this transaction WILL see the new 80, not 100
+-- If you used the count 100 to allocate output space, you have a bug
+
+COMMIT;
+-- Solution: Use REPEATABLE READ so all reads in the transaction see the same snapshot</div>
+
+      <h2>REPEATABLE READ</h2>
+      <div class="code-block">-- Snapshot taken at TRANSACTION START (not per-statement)
+-- All reads within the transaction see the same consistent snapshot
+-- Prevents: dirty reads, non-repeatable reads
+-- SQL-92 standard allows phantoms; PostgreSQL REPEATABLE READ also prevents phantoms
+
+-- PostgreSQL REPEATABLE READ is actually Snapshot Isolation:
+-- One snapshot for the entire transaction
+-- Other transactions' commits are invisible to you, no matter how long you wait
+
+BEGIN ISOLATION LEVEL REPEATABLE READ;
+
+SELECT salary FROM employees WHERE id = 1;  -- 80000 (snapshot taken here)
+
+-- (Session 2 updates salary to 90000 and commits)
+
+SELECT salary FROM employees WHERE id = 1;  -- still 80000 ← same snapshot!
+
+-- (Session 2 inserts a new employee)
+SELECT COUNT(*) FROM employees;  -- still same count as first read ← no phantom
+
+COMMIT;
+
+-- Write behavior: "first committer wins"
+-- If T1 and T2 both read the same row at snapshot start
+-- T1 updates and commits → T1 wins
+-- T2 tries to update → PostgreSQL checks: has this row been modified since T2's snapshot?
+--   YES (T1 updated it) → PostgreSQL uses "first committer wins":
+--   At REPEATABLE READ: T2's UPDATE proceeds (updates on top of T1's committed row)
+--   This can cause write skew anomalies</div>
+
+      <h3>Write Skew at REPEATABLE READ</h3>
+      <div class="code-block">-- Classic write skew example: meetup RSVP system
+-- Rule: at most 100 attendees
+-- Current count: 99
+
+-- T1 (REPEATABLE READ):
+BEGIN ISOLATION LEVEL REPEATABLE READ;
+SELECT COUNT(*) FROM rsvps WHERE event_id = 1;  -- returns 99 (< 100, ok to add)
+-- (T2 runs now before T1 finishes)
+
+-- T2 (REPEATABLE READ):
+BEGIN ISOLATION LEVEL REPEATABLE READ;
+SELECT COUNT(*) FROM rsvps WHERE event_id = 1;  -- returns 99 (same, ok to add)
+INSERT INTO rsvps (event_id, user_id) VALUES (1, 2002);
+COMMIT;  -- now count = 100
+
+-- T1 continues:
+INSERT INTO rsvps (event_id, user_id) VALUES (1, 1001);
+COMMIT;  -- THIS SUCCEEDS at REPEATABLE READ — now count = 101!
+-- T1's snapshot still showed count=99; its INSERT was not conflicting with T2's INSERT
+-- Rule violated: 101 attendees when max is 100
+
+-- Fix: Use SERIALIZABLE level, or use SELECT FOR UPDATE (pessimistic) to serialize</div>
+
+      <h2>SERIALIZABLE</h2>
+      <div class="code-block">-- Equivalent to serial execution — transactions appear to run one after another
+-- Prevents all anomalies: dirty reads, non-repeatable reads, phantoms, write skew
+-- PostgreSQL uses SSI (Serializable Snapshot Isolation) — MVCC-based, not lock-based
+
+-- Same RSVP example with SERIALIZABLE:
+BEGIN ISOLATION LEVEL SERIALIZABLE;
+SELECT COUNT(*) FROM rsvps WHERE event_id = 1;  -- 99
+INSERT INTO rsvps (event_id, user_id) VALUES (1, 1001);
+COMMIT;
+-- If T2 committed a conflicting INSERT while T1 was running, T1 gets:
+-- ERROR: could not serialize access due to read/write dependencies among transactions
+-- Application must catch this error and retry the transaction
+
+-- SSI tracks "anti-dependencies":
+-- T1 reads something that T2 wrote (rw-anti-dep: T1 depends on T2's write)
+-- T2 reads something that T1 wrote (rw-anti-dep: T2 depends on T1's write)
+-- Cycle detected → one transaction aborted
+
+-- How often does serialization failure happen?
+-- Less often than you think for well-structured applications
+-- SELECT FOR UPDATE still works inside SERIALIZABLE for explicit locking
+-- READ ONLY transactions in SERIALIZABLE: no anti-dependency tracking (no overhead)</div>
+
+      <h2>Isolation Levels in Different Databases</h2>
+      <table>
+        <tr><th>Anomaly</th><th>READ COMMITTED</th><th>REPEATABLE READ</th><th>SERIALIZABLE</th></tr>
+        <tr><td>Dirty read</td><td>Prevented</td><td>Prevented</td><td>Prevented</td></tr>
+        <tr><td>Non-repeatable read</td><td>Possible</td><td>Prevented</td><td>Prevented</td></tr>
+        <tr><td>Phantom read</td><td>Possible</td><td>Prevented (PG) / Possible (standard)</td><td>Prevented</td></tr>
+        <tr><td>Read skew</td><td>Possible</td><td>Prevented (snapshot)</td><td>Prevented</td></tr>
+        <tr><td>Write skew</td><td>Possible</td><td>Possible</td><td>Prevented</td></tr>
+        <tr><td>Lost update</td><td>Possible (without FOR UPDATE)</td><td>Prevented (PG: first-updater-wins)</td><td>Prevented</td></tr>
+      </table>
+
+      <div class="code-block">-- PostgreSQL default: READ COMMITTED
+-- MySQL InnoDB default: REPEATABLE READ
+-- Oracle default: READ COMMITTED
+-- SQL Server default: READ COMMITTED (but SNAPSHOT ISOLATION available)
+
+-- Checking and setting isolation:
+SHOW default_transaction_isolation;  -- show default
+
+-- Per-transaction:
+BEGIN ISOLATION LEVEL SERIALIZABLE;
+BEGIN ISOLATION LEVEL REPEATABLE READ;
+BEGIN ISOLATION LEVEL READ COMMITTED;
+
+-- Per-session:
+SET SESSION CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+-- For a specific statement (PostgreSQL 9.3+ SET LOCAL):
+BEGIN;
+SET LOCAL transaction_isolation TO 'repeatable read';</div>
+
+      <h2>Practical Guidelines</h2>
+      <table>
+        <tr><th>Use Case</th><th>Recommended Level</th><th>Reason</th></tr>
+        <tr><td>Simple read queries, dashboards</td><td>READ COMMITTED</td><td>Fast; stale data by milliseconds is fine</td></tr>
+        <tr><td>Report generation (multi-query)</td><td>REPEATABLE READ</td><td>Consistent snapshot across all report queries</td></tr>
+        <tr><td>Financial transactions</td><td>SERIALIZABLE or RR + SELECT FOR UPDATE</td><td>Prevent double-spend, write skew anomalies</td></tr>
+        <tr><td>Inventory/booking systems</td><td>SERIALIZABLE or pessimistic locking</td><td>Must prevent over-booking (write skew)</td></tr>
+        <tr><td>Idempotent background jobs</td><td>READ COMMITTED</td><td>Performance acceptable; can retry safely</td></tr>
+        <tr><td>Long-running batch jobs</td><td>REPEATABLE READ</td><td>Consistent view; no surprises mid-batch</td></tr>
+      </table>
+
+      <div class="danger-box">
+        <strong>Common production bug — READ COMMITTED + multi-step logic:</strong>
+        If your code does <em>read, compute, then write</em> in READ COMMITTED, the data you
+        read might be stale by the time you write. Upgrade to REPEATABLE READ or use
+        <code>SELECT ... FOR UPDATE</code> to lock the rows you'll update.
+      </div>
+
+      <h2>Summary</h2>
+      <ul>
+        <li>READ COMMITTED: fresh snapshot per-statement; most common default; allows non-repeatable reads and phantoms</li>
+        <li>REPEATABLE READ: single snapshot per-transaction; PostgreSQL also prevents phantoms (stronger than standard)</li>
+        <li>SERIALIZABLE (SSI): prevents all anomalies including write skew; may abort with serialization error; applications must retry</li>
+        <li>PostgreSQL's MVCC means readers never block writers at any isolation level</li>
+        <li>Write skew requires SERIALIZABLE or explicit pessimistic locking (SELECT FOR UPDATE)</li>
+        <li>Use REPEATABLE READ for report generation; SERIALIZABLE for financial/booking critical paths</li>
+      </ul>
+    </article>
+  </main>
+
+  <footer class="page-footer">
+    <p>Part of the DBMS Series — <a href="/articles.html">View all articles</a></p>
+  </footer>
+</body>
+</html>

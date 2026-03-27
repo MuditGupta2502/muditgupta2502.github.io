@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>Triggers and Stored Procedures: Mechanics, Use Cases and Pitfalls | Mudit Gupta</title>
+  <meta name="description" content="Database triggers (BEFORE/AFTER, ROW/STATEMENT, INSTEAD OF), stored procedures and functions in PL/pgSQL, security definer vs invoker, and when to use each." />
+  <link rel="stylesheet" href="/assets/css/articles.css" />
+  <style>
+    .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
+    .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; color: #1a1a1a; }
+    .article-content h3 { margin-top: 1.5rem; margin-bottom: 0.75rem; color: #1a1a1a; }
+    .article-content p { margin-bottom: 1rem; color: #333; }
+    .article-content ul, .article-content ol { margin-left: 2rem; margin-bottom: 1rem; }
+    .article-content li { margin-bottom: 0.5rem; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; white-space: pre; margin-bottom: 1rem; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    table th, table td { border: 1px solid #ddd; padding: 0.75rem; text-align: left; }
+    table th { background: #f0f0f0; font-weight: 600; }
+    .note-box { background: #fff8e1; border-left: 4px solid #f9a825; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .tip-box { background: #e8f5e9; border-left: 4px solid #43a047; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    .danger-box { background: #ffebee; border-left: 4px solid #e53935; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a href="/" class="home-link">Mudit Gupta</a>
+      <div class="topbar-actions">
+        <a href="/articles.html" class="btn btn-outline">Articles</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <article class="article-content">
+      <p class="kicker">DBMS Series | Part 035</p>
+      <h1>Triggers and Stored Procedures: Mechanics, Use Cases and Pitfalls</h1>
+      <p class="meta">Database Programming | 25 min read</p>
+
+      <p>
+        Triggers and stored procedures move business logic into the database engine. This
+        proximity to data can increase performance and enforce invariants across all callers —
+        but it also introduces hidden complexity, testing challenges, and tight coupling between
+        application and database. Knowing when to use them (and when not to) is a critical skill.
+      </p>
+
+      <h2>Trigger Types</h2>
+      <table>
+        <tr><th>Dimension</th><th>Options</th><th>Effect</th></tr>
+        <tr><td>Timing</td><td>BEFORE, AFTER, INSTEAD OF</td><td>When trigger body runs relative to the operation</td></tr>
+        <tr><td>Level</td><td>FOR EACH ROW, FOR EACH STATEMENT</td><td>Once per affected row vs once per SQL statement</td></tr>
+        <tr><td>Event</td><td>INSERT, UPDATE, DELETE, TRUNCATE</td><td>Which DML operation fires the trigger</td></tr>
+      </table>
+
+      <h2>BEFORE vs AFTER Triggers</h2>
+      <div class="code-block">-- BEFORE trigger: fires before the change is applied to the table
+-- Can: modify NEW values, cancel the operation (by returning NULL)
+-- Cannot: see the AFTER state of other rows affected by the same statement
+
+-- Example: audit/enforce before write
+CREATE OR REPLACE FUNCTION enforce_price_bounds()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    -- Clamp price to valid range before inserting
+    IF NEW.price < 0 THEN
+        NEW.price := 0;      -- Modify what gets written
+    END IF;
+    IF NEW.price > 99999 THEN
+        RAISE EXCEPTION 'Price % exceeds maximum allowed (99999)', NEW.price;
+    END IF;
+    RETURN NEW;  -- Must return NEW for ROW-level BEFORE triggers on INSERT/UPDATE
+END;
+$$;
+
+CREATE TRIGGER trg_price_bounds
+BEFORE INSERT OR UPDATE ON products
+FOR EACH ROW EXECUTE FUNCTION enforce_price_bounds();
+
+-- AFTER trigger: fires after the change is applied
+-- Can: see the committed NEW/OLD values; execute queries referencing updated rows
+-- Cannot: modify NEW (change has already been written)
+
+-- Example: update a denormalized summary after row change
+CREATE OR REPLACE FUNCTION update_order_total()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    UPDATE orders
+    SET total = (
+        SELECT COALESCE(SUM(line_total), 0)
+        FROM order_items
+        WHERE order_id = NEW.order_id
+    )
+    WHERE id = NEW.order_id;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER trg_order_total
+AFTER INSERT OR UPDATE OR DELETE ON order_items
+FOR EACH ROW EXECUTE FUNCTION update_order_total();</div>
+
+      <h2>ROW vs STATEMENT Level Triggers</h2>
+      <div class="code-block">-- FOR EACH ROW: fires once per affected row
+-- A single UPDATE that changes 10000 rows fires the trigger 10000 times
+-- Has access to: NEW (new row values), OLD (old row values)
+
+-- FOR EACH STATEMENT: fires once per SQL statement regardless of rows affected
+-- An UPDATE that changes 0, 1, or 10000 rows fires it ONCE
+-- Has access to: transition tables (REFERENCING OLD TABLE AS ot NEW TABLE AS nt)
+
+-- Statement-level trigger with transition tables (PostgreSQL 10+):
+CREATE OR REPLACE FUNCTION log_bulk_update()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    INSERT INTO audit_log (table_name, operation, row_count, when_at)
+    SELECT TG_TABLE_NAME, TG_OP, (SELECT COUNT(*) FROM new_table), NOW();
+    RETURN NULL;  -- Statement-level triggers must return NULL
+END;
+$$;
+
+CREATE TRIGGER trg_bulk_audit
+AFTER UPDATE ON products
+REFERENCING OLD TABLE AS old_table NEW TABLE AS new_table
+FOR EACH STATEMENT EXECUTE FUNCTION log_bulk_update();
+
+-- Performance implication:
+-- Avoid FOR EACH ROW triggers on tables with bulk operations
+-- 1M row bulk UPDATE with a row-level trigger → 1M trigger invocations
+-- Use statement-level + transition tables instead for bulk patterns</div>
+
+      <h2>INSTEAD OF Triggers (on Views)</h2>
+      <div class="code-block">-- INSTEAD OF triggers fire instead of the actual operation
+-- Used to make views writable
+
+CREATE VIEW customer_orders AS
+SELECT c.name, c.email, o.id AS order_id, o.total, o.status
+FROM customers c
+JOIN orders o ON c.id = o.customer_id;
+
+-- Now make it writable (INSERT to the view distributes to base tables):
+CREATE OR REPLACE FUNCTION customer_orders_insert()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+DECLARE
+    v_customer_id BIGINT;
+BEGIN
+    -- Upsert customer:
+    INSERT INTO customers (name, email)
+    VALUES (NEW.name, NEW.email)
+    ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name
+    RETURNING id INTO v_customer_id;
+    
+    -- Insert order:
+    INSERT INTO orders (customer_id, total, status)
+    VALUES (v_customer_id, NEW.total, NEW.status);
+    
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER trg_customer_orders_insert
+INSTEAD OF INSERT ON customer_orders
+FOR EACH ROW EXECUTE FUNCTION customer_orders_insert();
+
+-- Now you can: INSERT INTO customer_orders (name, email, total, status) VALUES (...)</div>
+
+      <h2>Stored Procedures and Functions</h2>
+      <div class="code-block">-- PostgreSQL FUNCTION: returns a value; can be used in SELECT expressions
+-- PostgreSQL PROCEDURE (PG11+): no return value; called with CALL; can COMMIT/ROLLBACK
+
+-- Function example: calculate customer lifetime value
+CREATE OR REPLACE FUNCTION customer_ltv(p_customer_id BIGINT)
+RETURNS NUMERIC LANGUAGE plpgsql STABLE AS $$
+DECLARE
+    v_ltv NUMERIC;
+BEGIN
+    SELECT COALESCE(SUM(total), 0)
+    INTO v_ltv
+    FROM orders
+    WHERE customer_id = p_customer_id
+      AND status = 'completed';
+    
+    RETURN v_ltv;
+END;
+$$;
+
+-- Use in queries just like a built-in function:
+SELECT id, name, customer_ltv(id) AS lifetime_value
+FROM customers
+WHERE customer_ltv(id) > 10000
+ORDER BY lifetime_value DESC;
+
+-- Procedure example: archive old orders (needs COMMIT inside)
+CREATE OR REPLACE PROCEDURE archive_old_orders(p_cutoff_date DATE)
+LANGUAGE plpgsql AS $$
+DECLARE
+    batch_size CONSTANT INT := 10000;
+    rows_moved INT;
+BEGIN
+    LOOP
+        INSERT INTO orders_archive
+        SELECT * FROM orders
+        WHERE order_date < p_cutoff_date
+        LIMIT batch_size;
+        
+        GET DIAGNOSTICS rows_moved = ROW_COUNT;
+        EXIT WHEN rows_moved = 0;
+        
+        DELETE FROM orders
+        WHERE order_date < p_cutoff_date
+          AND ctid IN (
+              SELECT ctid FROM orders WHERE order_date < p_cutoff_date LIMIT batch_size
+          );
+        
+        COMMIT;  -- Only in PROCEDURE; releases WAL pressure between batches
+        PERFORM pg_sleep(0.01);  -- Brief yield to other transactions
+    END LOOP;
+END;
+$$;
+
+-- Call the procedure:
+CALL archive_old_orders('2022-01-01');</div>
+
+      <h2>SECURITY DEFINER vs SECURITY INVOKER</h2>
+      <div class="code-block">-- SECURITY INVOKER (default): function runs with caller's privileges
+-- If caller can't access the underlying tables, function fails with permission error
+
+-- SECURITY DEFINER: function runs with the privileges of the function OWNER
+-- Caller can execute the function even if they don't have direct table access
+-- Useful for: exposing controlled operations to lower-privileged users
+
+-- Example: allow app_user to update only their own profile
+CREATE OR REPLACE FUNCTION update_my_profile(p_name TEXT, p_email TEXT)
+RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER AS $$
+BEGIN
+    UPDATE customers
+    SET name = p_name, email = p_email
+    WHERE id = current_user_id();  -- custom function that reads session variable
+END;
+$$;
+-- app_user has no direct UPDATE permission on customers
+-- But can EXECUTE this function → function owner's permission used
+-- CRITICAL: always validate input inside SECURITY DEFINER functions!
+-- A SECURITY DEFINER function with SQL injection = privilege escalation
+
+-- Safer pattern: set search_path explicitly inside SECURITY DEFINER functions
+CREATE OR REPLACE FUNCTION safe_fn()
+RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = public, pg_temp AS $$
+BEGIN
+    -- Explicit search_path prevents schema injection attacks
+END;
+$$;</div>
+
+      <h2>Audit Trigger Pattern</h2>
+      <div class="code-block">-- Generic audit trail: track all changes to any table
+-- Uses JSONB to store the old/new row as a document
+
+CREATE TABLE audit_trail (
+    id          BIGSERIAL PRIMARY KEY,
+    table_name  TEXT NOT NULL,
+    operation   TEXT NOT NULL,         -- INSERT, UPDATE, DELETE
+    old_data    JSONB,
+    new_data    JSONB,
+    changed_by  TEXT DEFAULT current_user,
+    changed_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE OR REPLACE FUNCTION audit_trigger_fn()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        INSERT INTO audit_trail (table_name, operation, old_data)
+        VALUES (TG_TABLE_NAME, TG_OP, to_jsonb(OLD));
+        RETURN OLD;
+    ELSIF TG_OP = 'INSERT' THEN
+        INSERT INTO audit_trail (table_name, operation, new_data)
+        VALUES (TG_TABLE_NAME, TG_OP, to_jsonb(NEW));
+        RETURN NEW;
+    ELSE -- UPDATE
+        INSERT INTO audit_trail (table_name, operation, old_data, new_data)
+        VALUES (TG_TABLE_NAME, TG_OP, to_jsonb(OLD), to_jsonb(NEW));
+        RETURN NEW;
+    END IF;
+END;
+$$;
+
+-- Apply to any sensitive table:
+CREATE TRIGGER trg_audit_customers
+AFTER INSERT OR UPDATE OR DELETE ON customers
+FOR EACH ROW EXECUTE FUNCTION audit_trigger_fn();</div>
+
+      <div class="danger-box">
+        <strong>Trigger pitfalls to avoid:</strong>
+        <ul>
+          <li><strong>Trigger chains:</strong> Trigger A modifies table B → fires Trigger B → modifies table C → ... Circular trigger chains cause infinite loops</li>
+          <li><strong>Hidden complexity:</strong> Application developers may not know triggers exist; unexpected side effects during debugging</li>
+          <li><strong>Performance:</strong> Row-level triggers on bulk operations are very slow; use statement-level with transition tables</li>
+          <li><strong>SECURITY DEFINER without input validation:</strong> Allows SQL injection with elevated privileges</li>
+          <li><strong>Mutating table error:</strong> In some databases, you cannot SELECT from the same table being modified in a row-level trigger</li>
+        </ul>
+      </div>
+
+      <h2>Summary</h2>
+      <ul>
+        <li>Triggers fire automatically on DML events; BEFORE can modify NEW and cancel the operation; AFTER sees committed state</li>
+        <li>ROW-level triggers fire per row; STATEMENT-level triggers fire once with access to transition tables</li>
+        <li>INSTEAD OF triggers make views writable by intercepting DML on view objects</li>
+        <li>Functions return values and can be used in expressions; Procedures (PG11+) can COMMIT inside and are called with CALL</li>
+        <li>SECURITY DEFINER runs with function owner's permissions — always validate inputs to prevent privilege escalation</li>
+        <li>Prefer statement-level triggers with transition tables for bulk operations over row-level triggers</li>
+      </ul>
+    </article>
+  </main>
+
+  <footer class="page-footer">
+    <p>Part of the DBMS Series — <a href="/articles.html">View all articles</a></p>
+  </footer>
+</body>
+</html>
