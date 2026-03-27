@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta http-equiv="X-UA-Compatible" content="IE=edge" />
   <title>Mudit Gupta | Blog & Articles</title>
-  <meta name="description" content="In-depth DBMS articles plus a complete TUF DBMS topic library covering transactions, CAP theorem, concurrency control, indexing, caching, and database security." />
+  <meta name="description" content="In-depth DBMS articles by Mudit Gupta covering fundamentals, SQL, optimization, NoSQL, transactions, distributed systems, security, and data engineering architecture." />
   <link rel="stylesheet" href="/assets/css/articles.css" />
 </head>
 <body>
@@ -23,7 +23,7 @@
       <p class="kicker">Writing</p>
       <h1>Blog & Articles</h1>
       <p class="lead">
-        In-depth notes on database management systems — from relational theory and SQL to query optimization, NoSQL, and database security.
+        In-depth notes on database management systems, from relational theory and SQL to distributed databases, transactions, recovery, monitoring, and scaling.
       </p>
     </section>
 
@@ -122,28 +122,78 @@
       </div>
 
       <div style="margin-top: 3rem; padding-top: 2rem; border-top: 1px solid #eee;">
-        <h2 style="font-size: 1.5rem; margin-bottom: 1.5rem; color: #1a1a1a;">TUF DBMS Complete Topic Library</h2>
+        <h2 style="font-size: 1.5rem; margin-bottom: 1.5rem; color: #1a1a1a;">DBMS Extended Concepts Series</h2>
 
         <article class="article-item">
-          <p class="meta">TUF DBMS | 94 topics</p>
-          <h2><a href="/articles/tufdbms/index.html" style="text-decoration: none; color: inherit;">Browse All TUF DBMS Topics</a></h2>
-          <p>
-            Access the full TUF DBMS course topic set, including transactions, ACID, CAP theorem, locking, isolation levels,
-            distributed databases, recovery, monitoring, caching, RBAC, and scaling.
-          </p>
+          <p class="meta">Foundations | 18 min read</p>
+          <h2><a href="/articles/dbms/012-types-of-databases-abstraction-and-users.html" style="text-decoration: none; color: inherit;">012: Types of Databases, Abstraction, Interfaces, and Users</a></h2>
+          <p>Database categories, abstraction layers, interface types, and role-wise responsibilities for real systems.</p>
         </article>
 
         <article class="article-item">
-          <p class="meta">Featured Missing Topics</p>
-          <h2 style="font-size: 1.2rem; margin: 0;">
-            <a href="/articles/tufdbms/057-2-acid-properties.html" style="text-decoration: none; color: inherit;">ACID Properties</a>
-            |
-            <a href="/articles/tufdbms/058-3-cap-theorem.html" style="text-decoration: none; color: inherit;">CAP Theorem</a>
-            |
-            <a href="/articles/tufdbms/059-4-database-transactions.html" style="text-decoration: none; color: inherit;">Database Transactions</a>
-            |
-            <a href="/articles/tufdbms/069-14-isolation-levels.html" style="text-decoration: none; color: inherit;">Isolation Levels</a>
-          </h2>
+          <p class="meta">Normalization | 21 min read</p>
+          <h2><a href="/articles/dbms/013-functional-dependency-armstrong-closure-and-denormalization.html" style="text-decoration: none; color: inherit;">013: Functional Dependencies, Armstrong Axioms, Closure, and Denormalization</a></h2>
+          <p>Deep coverage of FD reasoning, minimal cover, closure computation, and performance-driven denormalization choices.</p>
+        </article>
+
+        <article class="article-item">
+          <p class="meta">SQL Core | 22 min read</p>
+          <h2><a href="/articles/dbms/014-sql-operators-aggregates-and-clauses.html" style="text-decoration: none; color: inherit;">014: SQL Operators, Aggregates, and Clause Evaluation Order</a></h2>
+          <p>Practical operator usage, aggregate behavior, and logical query order needed for writing correct SQL.</p>
+        </article>
+
+        <article class="article-item">
+          <p class="meta">SQL Advanced | 24 min read</p>
+          <h2><a href="/articles/dbms/015-sql-joins-subqueries-and-set-operations.html" style="text-decoration: none; color: inherit;">015: Advanced SQL Joins, Subqueries, and Set Operations</a></h2>
+          <p>Join design, correlated subqueries, and set algebra patterns for complex data retrieval.</p>
+        </article>
+
+        <article class="article-item">
+          <p class="meta">Optimization | 23 min read</p>
+          <h2><a href="/articles/dbms/016-query-processing-and-advanced-optimization.html" style="text-decoration: none; color: inherit;">016: Query Processing and Advanced Optimization</a></h2>
+          <p>From parsing to physical planning, plus practical tuning using explain plans and statistics.</p>
+        </article>
+
+        <article class="article-item">
+          <p class="meta">NoSQL | 21 min read</p>
+          <h2><a href="/articles/dbms/017-nosql-languages-graph-and-in-memory-databases.html" style="text-decoration: none; color: inherit;">017: NoSQL Languages, Graph Databases, and In-Memory Systems</a></h2>
+          <p>Document, graph, and memory-first database patterns and their query language models.</p>
+        </article>
+
+        <article class="article-item">
+          <p class="meta">Distributed Systems | 26 min read</p>
+          <h2><a href="/articles/dbms/018-partitioning-sharding-and-distributed-architecture.html" style="text-decoration: none; color: inherit;">018: Partitioning, Sharding, Distributed Architecture, and CAP</a></h2>
+          <p>Data distribution, replication, fault tolerance, load balancing, and CAP theorem trade-offs.</p>
+        </article>
+
+        <article class="article-item">
+          <p class="meta">Transactions | 25 min read</p>
+          <h2><a href="/articles/dbms/019-transactions-concurrency-and-serialization.html" style="text-decoration: none; color: inherit;">019: Transactions, ACID, Schedules, and Serializability</a></h2>
+          <p>Transaction correctness, schedule analysis, and serializability for high-concurrency systems.</p>
+        </article>
+
+        <article class="article-item">
+          <p class="meta">Concurrency Control | 28 min read</p>
+          <h2><a href="/articles/dbms/020-locking-timestamp-ordering-deadlocks-and-isolation-levels.html" style="text-decoration: none; color: inherit;">020: Locking, Timestamp Ordering, Deadlocks, and Isolation Levels</a></h2>
+          <p>2PL, timestamp protocols, Thomas write rule, starvation, deadlock handling, and isolation choices.</p>
+        </article>
+
+        <article class="article-item">
+          <p class="meta">Reliability | 24 min read</p>
+          <h2><a href="/articles/dbms/021-triggers-stored-procedures-recovery-and-backups.html" style="text-decoration: none; color: inherit;">021: Triggers, Stored Procedures, Recovery Management, and Backups</a></h2>
+          <p>Procedural database features, crash recovery lifecycle, and backup/restore strategy planning.</p>
+        </article>
+
+        <article class="article-item">
+          <p class="meta">Operations | 23 min read</p>
+          <h2><a href="/articles/dbms/022-monitoring-performance-tuning-and-caching-strategies.html" style="text-decoration: none; color: inherit;">022: Monitoring, Performance Tuning, and Caching Strategies</a></h2>
+          <p>Operational KPIs, tuning workflow, and practical cache patterns for high-throughput services.</p>
+        </article>
+
+        <article class="article-item">
+          <p class="meta">Security & Scalability | 28 min read</p>
+          <h2><a href="/articles/dbms/023-encryption-rbac-scaling-big-data-and-warehousing.html" style="text-decoration: none; color: inherit;">023: Encryption, RBAC, Scaling, Big Data, DBaaS, Migration, and Warehousing</a></h2>
+          <p>Security controls plus modern scalability, migration, warehousing, and event-driven data architecture.</p>
         </article>
       </div>
 

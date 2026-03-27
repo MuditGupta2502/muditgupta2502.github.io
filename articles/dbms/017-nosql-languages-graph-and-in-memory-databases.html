@@ -1,0 +1,74 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>NoSQL Languages, Graph Databases, and In-Memory Systems | Mudit Gupta</title>
+  <meta name="description" content="NoSQL Languages, Graph Databases, and In-Memory Systems" />
+  <link rel="stylesheet" href="/assets/css/articles.css" />
+  <style>
+    .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
+    .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; color: #1a1a1a; }
+    .article-content h3 { margin-top: 1.5rem; margin-bottom: 0.75rem; color: #1a1a1a; }
+    .article-content p { margin-bottom: 1rem; color: #333; }
+    .article-content ul, .article-content ol { margin-left: 2rem; margin-bottom: 1rem; }
+    .article-content li { margin-bottom: 0.5rem; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; white-space: pre; }
+    .note-box { background: #fff8e1; border-left: 4px solid #f9a825; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    table th, table td { border: 1px solid #ddd; padding: 0.75rem; text-align: left; }
+    table th { background: #f0f0f0; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a href="/" class="home-link">Mudit Gupta</a>
+      <div class="topbar-actions">
+        <a href="/articles.html" class="btn btn-outline">Articles</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <article class="article-content">
+      <p class="kicker">DBMS Series | Part 017</p>
+      <h1>NoSQL Languages, Graph Databases, and In-Memory Systems</h1>
+      <p class="meta">NoSQL | 21 min read</p>
+      <h2>Beyond Relational SQL</h2>
+      <p>
+        Different workloads require different query models: key-value APIs, document query languages,
+        graph traversal languages, and memory-first structures.
+      </p>
+
+      <h2>NoSQL Query Languages</h2>
+      <ul>
+        <li>MongoDB aggregation pipeline for document analytics.</li>
+        <li>CQL in Cassandra for partition-first access patterns.</li>
+        <li>Cypher in Neo4j for graph traversal and path analysis.</li>
+      </ul>
+
+      <h2>Graph Database Use Cases</h2>
+      <ul>
+        <li>Fraud rings and social relationships.</li>
+        <li>Recommendation engines and dependency impact maps.</li>
+      </ul>
+
+      <h2>In-Memory Databases</h2>
+      <p>
+        Redis and similar systems reduce latency by keeping hot data in RAM.
+        They are excellent for caching, counters, queues, and session state.
+      </p>
+
+      <div class="code-block">-- Example pattern
+GET product:123
+SETEX product:123 300 "{...json...}"</div>
+    </article>
+  </main>
+
+  <footer style="text-align: center; padding: 2rem; color: #666; border-top: 1px solid #eee; margin-top: 3rem;">
+    <p>&copy; 2026 Mudit Gupta. All rights reserved.</p>
+  </footer>
+</body>
+</html>

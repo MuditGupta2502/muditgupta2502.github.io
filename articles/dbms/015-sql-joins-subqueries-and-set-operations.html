@@ -1,0 +1,75 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>Advanced SQL Joins, Subqueries, and Set Operations | Mudit Gupta</title>
+  <meta name="description" content="Advanced SQL Joins, Subqueries, and Set Operations" />
+  <link rel="stylesheet" href="/assets/css/articles.css" />
+  <style>
+    .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
+    .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; color: #1a1a1a; }
+    .article-content h3 { margin-top: 1.5rem; margin-bottom: 0.75rem; color: #1a1a1a; }
+    .article-content p { margin-bottom: 1rem; color: #333; }
+    .article-content ul, .article-content ol { margin-left: 2rem; margin-bottom: 1rem; }
+    .article-content li { margin-bottom: 0.5rem; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; white-space: pre; }
+    .note-box { background: #fff8e1; border-left: 4px solid #f9a825; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    table th, table td { border: 1px solid #ddd; padding: 0.75rem; text-align: left; }
+    table th { background: #f0f0f0; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a href="/" class="home-link">Mudit Gupta</a>
+      <div class="topbar-actions">
+        <a href="/articles.html" class="btn btn-outline">Articles</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <article class="article-content">
+      <p class="kicker">DBMS Series | Part 015</p>
+      <h1>Advanced SQL Joins, Subqueries, and Set Operations</h1>
+      <p class="meta">SQL Advanced | 24 min read</p>
+      <h2>Join Strategy</h2>
+      <ul>
+        <li>INNER JOIN for matching rows only.</li>
+        <li>LEFT JOIN for preserving left table rows.</li>
+        <li>FULL OUTER JOIN for symmetric inclusion.</li>
+        <li>SELF JOIN for hierarchical or comparative rows.</li>
+      </ul>
+
+      <h2>Subquery Types</h2>
+      <ul>
+        <li>Scalar subquery in SELECT/WHERE.</li>
+        <li>Table subquery in FROM (derived table).</li>
+        <li>Correlated subquery using outer query columns.</li>
+      </ul>
+
+      <h2>Set Operations</h2>
+      <p>
+        UNION removes duplicates, UNION ALL keeps duplicates, INTERSECT returns common rows,
+        and EXCEPT returns rows in the first result not present in the second.
+      </p>
+
+      <div class="code-block">-- Employees earning above department average
+SELECT e.emp_id, e.name, e.salary
+FROM Employees e
+WHERE e.salary &gt; (
+  SELECT AVG(e2.salary)
+  FROM Employees e2
+  WHERE e2.dept_id = e.dept_id
+);</div>
+    </article>
+  </main>
+
+  <footer style="text-align: center; padding: 2rem; color: #666; border-top: 1px solid #eee; margin-top: 3rem;">
+    <p>&copy; 2026 Mudit Gupta. All rights reserved.</p>
+  </footer>
+</body>
+</html>

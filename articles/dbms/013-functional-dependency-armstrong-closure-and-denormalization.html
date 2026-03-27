@@ -1,0 +1,79 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>Functional Dependencies, Armstrong Axioms, Closure, and Denormalization | Mudit Gupta</title>
+  <meta name="description" content="Functional Dependencies, Armstrong Axioms, Closure, and Denormalization" />
+  <link rel="stylesheet" href="/assets/css/articles.css" />
+  <style>
+    .article-content { max-width: 800px; margin: 0 auto; line-height: 1.8; }
+    .article-content h2 { margin-top: 2rem; margin-bottom: 1rem; color: #1a1a1a; }
+    .article-content h3 { margin-top: 1.5rem; margin-bottom: 0.75rem; color: #1a1a1a; }
+    .article-content p { margin-bottom: 1rem; color: #333; }
+    .article-content ul, .article-content ol { margin-left: 2rem; margin-bottom: 1rem; }
+    .article-content li { margin-bottom: 0.5rem; }
+    .code-block { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; white-space: pre; }
+    .note-box { background: #fff8e1; border-left: 4px solid #f9a825; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    table th, table td { border: 1px solid #ddd; padding: 0.75rem; text-align: left; }
+    table th { background: #f0f0f0; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a href="/" class="home-link">Mudit Gupta</a>
+      <div class="topbar-actions">
+        <a href="/articles.html" class="btn btn-outline">Articles</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <article class="article-content">
+      <p class="kicker">DBMS Series | Part 013</p>
+      <h1>Functional Dependencies, Armstrong Axioms, Closure, and Denormalization</h1>
+      <p class="meta">Normalization | 21 min read</p>
+      <h2>Functional Dependency Refresher</h2>
+      <p>
+        For relation R, X -> Y means each X value determines exactly one Y value. FDs define redundancy and normal form violations.
+      </p>
+
+      <h2>Armstrong Axioms</h2>
+      <ul>
+        <li>Reflexivity: if Y subset of X then X -> Y.</li>
+        <li>Augmentation: if X -> Y then XZ -> YZ.</li>
+        <li>Transitivity: if X -> Y and Y -> Z then X -> Z.</li>
+      </ul>
+      <p>Derived rules (union, decomposition, pseudo-transitivity) make reasoning practical in exam and interview settings.</p>
+
+      <h2>Attribute Closure</h2>
+      <div class="code-block">Given F = {A->B, B->C, CD->E}
+A+ = {A, B, C}
+CD+ = {C, D, E}</div>
+      <p>Compute closure to test superkeys, candidate keys, and dependency preservation after decomposition.</p>
+
+      <h2>Inference Rules and Minimal Cover</h2>
+      <ul>
+        <li>Split right sides into single attributes.</li>
+        <li>Remove extraneous attributes from left sides.</li>
+        <li>Drop redundant dependencies.</li>
+      </ul>
+
+      <h2>Denormalization Trade-off</h2>
+      <p>
+        Denormalization improves read performance at the cost of update complexity and potential inconsistency.
+        Apply only when measured bottlenecks justify it.
+      </p>
+
+      <div class="note-box">Use normalization for correctness first, denormalize selectively for measured performance gains.</div>
+    </article>
+  </main>
+
+  <footer style="text-align: center; padding: 2rem; color: #666; border-top: 1px solid #eee; margin-top: 3rem;">
+    <p>&copy; 2026 Mudit Gupta. All rights reserved.</p>
+  </footer>
+</body>
+</html>
